@@ -1,0 +1,39 @@
+services:
+
+  user-db:
+    image: postgres:17
+    container_name: shopsphere-user-db
+    environment:
+      POSTGRES_DB: user_db
+      POSTGRES_USER: shopsphere
+      POSTGRES_PASSWORD: shopsphere_password
+    ports:
+      - "5433:5432"
+    volumes:
+      - user_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U shopsphere -d user_db" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  product-db:
+    image: postgres:17
+    container_name: shopsphere-product-db
+    environment:
+      POSTGRES_DB: product_db
+      POSTGRES_USER: shopsphere
+      POSTGRES_PASSWORD: shopsphere_password
+    ports:
+      - "5434:5432"  # Changed external port to 5434 to avoid conflict
+    volumes:
+      - product_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U shopsphere -d product_db" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  user_db_data:
+  product_db_data:  # Added new volume for product database persistence

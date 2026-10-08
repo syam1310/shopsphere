@@ -1,0 +1,39 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: user-service
+
+
+
+  datasource:
+    url: jdbc:postgresql://localhost:5433/user_db
+    username: shopsphere
+    password: shopsphere_password
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+jwt:
+  secret: ${JWT_SECRET}
+  expiration: 3600000
+
+app:
+  refresh-token:
+    expiration: 2592000000
+
+logging:
+  level:
+    com.shopsphere.userservice: INFO
