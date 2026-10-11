@@ -40,12 +40,28 @@ public class JwtService {
 //                .signWith(secretKey)
 //                .compact();
 //    }
-    public String generateToken(String email, Role role) {
+//    public String generateToken(String email, Role role) {
+//
+//        Map<String, Object> claims = new HashMap<>();
+//        claims.put("role", role.name());
+//
+//        return Jwts.builder().claims(claims).subject(email).issuedAt(new Date()).expiration(new Date(System.currentTimeMillis() + expirationTime)).signWith(secretKey).compact();
+//    }
+
+
+    public String generateToken(String email, Long userId, Role role) {
 
         Map<String, Object> claims = new HashMap<>();
         claims.put("role", role.name());
+        claims.put("userId", userId);
 
-        return Jwts.builder().claims(claims).subject(email).issuedAt(new Date()).expiration(new Date(System.currentTimeMillis() + expirationTime)).signWith(secretKey).compact();
+        return Jwts.builder()
+                .claims(claims)
+                .subject(email)
+                .issuedAt(new Date())
+                .expiration(new Date(System.currentTimeMillis() + expirationTime))
+                .signWith(secretKey)
+                .compact();
     }
 
     public String extractEmail(String token) {

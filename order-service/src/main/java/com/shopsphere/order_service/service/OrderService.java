@@ -1,0 +1,206 @@
+package com.shopsphere.order_service.service;
+
+import com.shopsphere.order_service.client.InventoryClient;
+import com.shopsphere.order_service.client.ProductClient;
+import com.shopsphere.order_service.client.ProductClient.ProductResponse;
+import com.shopsphere.order_service.dto.CreateOrderRequest;
+import com.shopsphere.order_service.dto.OrderItemRequest;
+import com.shopsphere.order_service.entity.Order;
+import com.shopsphere.order_service.entity.OrderItem;
+import com.shopsphere.order_service.entity.OrderStatus;
+import com.shopsphere.order_service.exception.InvalidOrderStatusException;
+import com.shopsphere.order_service.exception.OrderNotFoundException;
+import com.shopsphere.order_service.repository.OrderRepository;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+
+@Service
+public class OrderService {
+
+    private final OrderRepository orderRepository;
+    private final ProductClient productClient;
+    private final InventoryClient inventoryClient;
+    private final InventoryCompensationService compensationService;
+
+    public OrderService(
+            OrderRepository orderRepository,
+            ProductClient productClient,
+            InventoryClient inventoryClient,
+            InventoryCompensationService compensationService
+    ) {
+        this.orderRepository = orderRepository;
+        this.productClient = productClient;
+        this.inventoryClient = inventoryClient;
+        this.compensationService = compensationService;
+    }
+
+    public List<Order> getAllOrders() {
+        return orderRepository.findAll();
+    }
+
+    public Optional<Order> getOrderById(Long id) {
+        return orderRepository.findById(id);
+    }
+
+    public List<Order> getOrdersByUserId(Long userId) {
+        return orderRepository.findByUserId(userId);
+    }
+
+    @Transactional
+    public Order createOrder(
+            CreateOrderRequest request,
+            Long userId,
+            String token) {
+
+        BigDecimal totalAmount = BigDecimal.ZERO;
+        Order order = new Order();
+
+        // Keep the actual order items so compensation uses the same reservation IDs.
+        List<OrderItem> reservedItems = new ArrayList<>();
+
+        try {
+            for (OrderItemRequest item : request.items()) {
+                ProductResponse product =
+                        productClient.getProductById(item.productId(), token);
+
+                if (product == null || product.id() == null) {
+                    throw new IllegalStateException(
+                            "Product service returned an invalid response");
+                }
+
+                if (!product.active()) {
+                    throw new IllegalArgumentException(
+                            "Product " + product.id() + " is inactive");
+                }
+
+                if (product.price() == null || product.price().signum() < 0) {
+                    throw new IllegalStateException(
+                            "Product service returned an invalid price");
+                }
+
+                if (product.quantity() == null
+                        || item.quantity() > product.quantity()) {
+                    throw new IllegalArgumentException(
+                            "Insufficient stock for product " + product.id());
+                }
+
+                BigDecimal itemTotal = product.price()
+                        .multiply(BigDecimal.valueOf(item.quantity()));
+
+                UUID reservationId = UUID.randomUUID();
+
+                OrderItem orderItem = new OrderItem();
+                orderItem.setReservationId(reservationId);
+                orderItem.setProductId(product.id());
+                orderItem.setQuantity(item.quantity());
+                orderItem.setUnitPrice(product.price());
+                orderItem.setSubtotal(itemTotal);
+
+                order.addItem(orderItem);
+                totalAmount = totalAmount.add(itemTotal);
+
+                inventoryClient.reserveInventory(
+                        reservationId,
+                        product.id(),
+                        item.quantity());
+
+                // Record only after inventory confirms reservation.
+                reservedItems.add(orderItem);
+            }
+
+            order.setUserId(userId);
+            order.setTotalAmount(totalAmount);
+            order.setStatus(OrderStatus.PENDING);
+
+            return orderRepository.save(order);
+
+        } catch (RuntimeException exception) {
+            for (OrderItem reservedItem : reservedItems) {
+                try {
+                    inventoryClient.releaseInventory(
+                            reservedItem.getReservationId(),
+                            reservedItem.getProductId(),
+                            reservedItem.getQuantity()
+                    );
+                } catch (RuntimeException releaseException) {
+                    exception.addSuppressed(releaseException);
+
+                    try {
+                        compensationService.recordFailedRelease(
+                                reservedItem.getReservationId(),
+                                reservedItem.getProductId(),
+                                reservedItem.getQuantity(),
+                                releaseException
+                        );
+                    } catch (RuntimeException persistenceException) {
+                        exception.addSuppressed(persistenceException);
+                    }
+                }
+            }
+
+            throw exception;
+        }
+    }
+
+    @Transactional
+    public Order updateOrderStatus(Long orderId, OrderStatus newStatus) {
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new OrderNotFoundException(orderId));
+
+        if (order.getStatus() != OrderStatus.PENDING) {
+            throw new InvalidOrderStatusException(
+                    "Only pending orders can be confirmed or cancelled");
+        }
+
+        if (newStatus != OrderStatus.CONFIRMED
+                && newStatus != OrderStatus.CANCELLED) {
+            throw new IllegalArgumentException(
+                    "Only CONFIRMED or CANCELLED status is allowed");
+        }
+
+
+        if (newStatus == OrderStatus.CANCELLED) {
+            for (OrderItem item : order.getItems()) {
+                try {
+                    if (item.getReservationId() != null) {
+                        // Idempotent release for orders created with reservation IDs.
+                        inventoryClient.releaseInventory(
+                                item.getReservationId(),
+                                item.getProductId(),
+                                item.getQuantity());
+                    } else {
+                        // Legacy orders without reservation IDs use the legacy API.
+                        inventoryClient.releaseInventory(
+                                null,
+                                item.getProductId(),
+                                item.getQuantity());
+                    }
+                } catch (RuntimeException releaseException) {
+                    if (item.getReservationId() != null) {
+                        try {
+                            compensationService.recordFailedRelease(
+                                    item.getReservationId(),
+                                    item.getProductId(),
+                                    item.getQuantity(),
+                                    releaseException);
+                        } catch (RuntimeException persistenceException) {
+                            releaseException.addSuppressed(persistenceException);
+                        }
+                    }
+
+                    throw releaseException;
+                }
+            }
+        }
+
+
+        order.setStatus(newStatus);
+        return orderRepository.save(order);
+    }
+}

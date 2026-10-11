@@ -22,7 +22,11 @@ spring:
 logging:
   level:
     org.springframework.security: DEBUG
+    com.shopsphere.inventory_service.security: DEBUG
 
 jwt:
   secret: ${JWT_SECRET}
+
+internal-service:
+  secret: ${INTERNAL_SERVICE_SECRET}
 

@@ -1,0 +1,42 @@
+server:
+  port: 8084
+
+spring:
+  application:
+    name: order-service
+
+  datasource:
+    url: jdbc:postgresql://localhost:5436/order_db
+    username: shopsphere
+    password: shopsphere_password
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+logging:
+  level:
+    org.springframework.security: DEBUG
+
+jwt:
+  secret: ${JWT_SECRET}
+
+
+
+product-service:
+  base-url: ${PRODUCT_SERVICE_URL:http://localhost:8082}
+
+inventory-service:
+  base-url: ${INVENTORY_SERVICE_URL:http://localhost:8083}
+  internal-secret: ${INTERNAL_SERVICE_SECRET}

@@ -1,20 +1,28 @@
 package com.shopsphere.inventory_service.service;
 
 import com.shopsphere.inventory_service.entity.Inventory;
+import com.shopsphere.inventory_service.entity.InventoryReservation;
+import com.shopsphere.inventory_service.entity.ReservationStatus;
 import com.shopsphere.inventory_service.repository.InventoryRepository;
+import com.shopsphere.inventory_service.repository.InventoryReservationRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.NoSuchElementException;
+import java.util.UUID;
 
 @Service
 public class InventoryService {
 
     private final InventoryRepository inventoryRepository;
+    private final InventoryReservationRepository reservationRepository;
 
-    public InventoryService(InventoryRepository inventoryRepository) {
+    public InventoryService(
+            InventoryRepository inventoryRepository,
+            InventoryReservationRepository reservationRepository) {
         this.inventoryRepository = inventoryRepository;
+        this.reservationRepository = reservationRepository;
     }
 
     public List<Inventory> getAllInventory() {
@@ -45,5 +53,158 @@ public class InventoryService {
         }
 
         return inventoryRepository.save(inventory);
+    }
+
+    // Legacy method retained for existing callers and tests.
+    @Transactional
+    public Inventory reserveInventory(Long productId, Integer requestedQuantity) {
+        validateQuantity(requestedQuantity, "Reservation");
+
+        Inventory inventory = getInventoryForUpdate(productId);
+        int availableQuantity =
+                inventory.getQuantity() - inventory.getReservedQuantity();
+
+        if (requestedQuantity > availableQuantity) {
+            throw new IllegalArgumentException(
+                    "Insufficient available inventory for product ID: " + productId);
+        }
+
+        inventory.setReservedQuantity(
+                inventory.getReservedQuantity() + requestedQuantity);
+
+        return inventoryRepository.save(inventory);
+    }
+
+    // Idempotent reservation: retrying the same UUID won't reserve twice.
+    @Transactional
+    public Inventory reserveInventory(
+            UUID reservationId, Long productId, Integer requestedQuantity) {
+
+        if (reservationId == null) {
+            throw new IllegalArgumentException("Reservation ID is required");
+        }
+        validateQuantity(requestedQuantity, "Reservation");
+
+        Inventory inventory = getInventoryForUpdate(productId);
+
+        InventoryReservation existing = reservationRepository
+                .findByReservationId(reservationId)
+                .orElse(null);
+
+        if (existing != null) {
+            validateMatchingReservation(existing, productId, requestedQuantity);
+
+            if (existing.getStatus() == ReservationStatus.RELEASED) {
+                throw new IllegalStateException(
+                        "This reservation has already been released: " + reservationId);
+            }
+
+            return inventory;
+        }
+
+        int availableQuantity =
+                inventory.getQuantity() - inventory.getReservedQuantity();
+
+        if (requestedQuantity > availableQuantity) {
+            throw new IllegalArgumentException(
+                    "Insufficient available inventory for product ID: " + productId);
+        }
+
+        inventory.setReservedQuantity(
+                inventory.getReservedQuantity() + requestedQuantity);
+        inventoryRepository.save(inventory);
+
+        InventoryReservation reservation = new InventoryReservation();
+        reservation.setReservationId(reservationId);
+        reservation.setProductId(productId);
+        reservation.setQuantity(requestedQuantity);
+        reservation.setStatus(ReservationStatus.RESERVED);
+        reservationRepository.save(reservation);
+
+        return inventory;
+    }
+
+    // Legacy release method retained for older callers.
+    @Transactional
+    public Inventory releaseInventory(Long productId, Integer quantityToRelease) {
+        validateQuantity(quantityToRelease, "Release");
+
+        Inventory inventory = getInventoryForUpdate(productId);
+
+        if (quantityToRelease > inventory.getReservedQuantity()) {
+            throw new IllegalArgumentException(
+                    "Cannot release more stock than is reserved for product ID: "
+                            + productId);
+        }
+
+        inventory.setReservedQuantity(
+                inventory.getReservedQuantity() - quantityToRelease);
+
+        return inventoryRepository.save(inventory);
+    }
+
+    // Idempotent release: a repeated release won't decrement stock again.
+    @Transactional
+    public Inventory releaseInventory(
+            UUID reservationId, Long productId, Integer quantityToRelease) {
+
+        if (reservationId == null) {
+            throw new IllegalArgumentException("Reservation ID is required");
+        }
+        validateQuantity(quantityToRelease, "Release");
+
+        InventoryReservation reservation = reservationRepository
+                .findByReservationIdForUpdate(reservationId)
+                .orElseThrow(() -> new NoSuchElementException(
+                        "Reservation not found: " + reservationId));
+
+        validateMatchingReservation(reservation, productId, quantityToRelease);
+
+        Inventory inventory = getInventoryForUpdate(reservation.getProductId());
+
+        if (reservation.getStatus() == ReservationStatus.RELEASED) {
+            return inventory;
+        }
+
+        if (reservation.getQuantity() > inventory.getReservedQuantity()) {
+            throw new IllegalStateException(
+                    "Reserved stock is inconsistent for product ID: "
+                            + reservation.getProductId());
+        }
+
+        inventory.setReservedQuantity(
+                inventory.getReservedQuantity() - reservation.getQuantity());
+
+        reservation.setStatus(ReservationStatus.RELEASED);
+
+        inventoryRepository.save(inventory);
+        reservationRepository.save(reservation);
+
+        return inventory;
+    }
+
+    private Inventory getInventoryForUpdate(Long productId) {
+        return inventoryRepository.findByProductIdForUpdate(productId)
+                .orElseThrow(() -> new NoSuchElementException(
+                        "Inventory not found for product ID: " + productId));
+    }
+
+    private void validateQuantity(Integer quantity, String operation) {
+        if (quantity == null || quantity <= 0) {
+            throw new IllegalArgumentException(
+                    operation + " quantity must be greater than zero");
+        }
+    }
+
+    private void validateMatchingReservation(
+            InventoryReservation reservation,
+            Long productId,
+            Integer quantity) {
+
+        if (!reservation.getProductId().equals(productId)
+                || !reservation.getQuantity().equals(quantity)) {
+            throw new IllegalArgumentException(
+                    "Reservation ID does not match the requested product and quantity");
+        }
     }
 }

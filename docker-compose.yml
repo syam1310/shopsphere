@@ -51,8 +51,27 @@ services:
       timeout: 5s
       retries: 5
 
+  order-db:
+    image: postgres:17
+    container_name: shopsphere-order-db
+    environment:
+      POSTGRES_DB: order_db
+      POSTGRES_USER: shopsphere
+      POSTGRES_PASSWORD: shopsphere_password
+    ports:
+      - "5436:5432"
+    volumes:
+      - order_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U shopsphere -d order_db" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+
 
 volumes:
   user_db_data:
   product_db_data:
-  inventory_db_data:  # Added new volume for product database persistence
+  inventory_db_data:
+  order_db_data:

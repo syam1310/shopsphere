@@ -1,0 +1,23 @@
+spring:
+  application:
+    name: product-service
+  datasource:
+    url: jdbc:postgresql://localhost:5434/product_db
+    username: shopsphere
+    password: shopsphere_password
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+
+server:
+  port: 8082
+
+jwt:
+  secret: ${JWT_SECRET}
+
+logging:
+  level:
+    com:
+      shopsphere:
+        product_service: INFO

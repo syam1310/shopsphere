@@ -1,6 +1,8 @@
 package com.shopsphere.inventory_service.controller;
 
 import com.shopsphere.inventory_service.dto.CreateInventoryRequest;
+import com.shopsphere.inventory_service.dto.ReleaseInventoryRequest;
+import com.shopsphere.inventory_service.dto.ReserveInventoryRequest;
 import com.shopsphere.inventory_service.entity.Inventory;
 import com.shopsphere.inventory_service.service.InventoryService;
 import jakarta.validation.Valid;
@@ -43,5 +45,41 @@ public class InventoryController {
         );
 
         return inventoryService.createInventory(inventory);
+    }
+
+    @PostMapping("/reserve")
+    public Inventory reserveInventory(
+            @Valid @RequestBody ReserveInventoryRequest request) {
+
+        if (request.reservationId() == null) {
+            return inventoryService.reserveInventory(
+                    request.productId(),
+                    request.quantity()
+            );
+        }
+
+        return inventoryService.reserveInventory(
+                request.reservationId(),
+                request.productId(),
+                request.quantity()
+        );
+    }
+
+    @PostMapping("/release")
+    public Inventory releaseInventory(
+            @Valid @RequestBody ReleaseInventoryRequest request) {
+
+        if (request.reservationId() == null) {
+            return inventoryService.releaseInventory(
+                    request.productId(),
+                    request.quantity()
+            );
+        }
+
+        return inventoryService.releaseInventory(
+                request.reservationId(),
+                request.productId(),
+                request.quantity()
+        );
     }
 }
