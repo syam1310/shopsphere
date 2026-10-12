@@ -23,7 +23,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -38,13 +38,11 @@ class OrderServiceTest {
     @Mock
     private InventoryClient inventoryClient;
 
-    @InjectMocks
-    private OrderService orderService;
-
-
     @Mock
     private InventoryCompensationService compensationService;
 
+    @InjectMocks
+    private OrderService orderService;
 
     @Test
     void createOrder_whenSecondProductIsMissing_releasesFirstReservation() {
@@ -81,12 +79,25 @@ class OrderServiceTest {
                 ArgumentCaptor.forClass(UUID.class);
 
         verify(inventoryClient).reserveInventory(
-                reservationIdCaptor.capture(), eq(3L), eq(1));
+                reservationIdCaptor.capture(),
+                eq(3L),
+                eq(1)
+        );
 
         UUID reservationId = reservationIdCaptor.getValue();
 
         verify(inventoryClient).releaseInventory(
-                eq(reservationId), eq(3L), eq(1));
+                eq(reservationId),
+                eq(3L),
+                eq(1)
+        );
+
+        verify(compensationService, never()).recordFailedRelease(
+                any(UUID.class),
+                eq(3L),
+                eq(1),
+                any(RuntimeException.class)
+        );
 
         verify(orderRepository, never()).save(any());
     }
@@ -131,14 +142,26 @@ class OrderServiceTest {
         assertTrue(List.of(thrown.getSuppressed()).contains(releaseException));
 
         verify(inventoryClient).reserveInventory(
-                any(UUID.class), eq(3L), eq(1));
+                any(UUID.class),
+                eq(3L),
+                eq(1)
+        );
 
         verify(inventoryClient).releaseInventory(
-                any(UUID.class), eq(3L), eq(1));
+                any(UUID.class),
+                eq(3L),
+                eq(1)
+        );
+
+        verify(compensationService).recordFailedRelease(
+                any(UUID.class),
+                eq(3L),
+                eq(1),
+                same(releaseException)
+        );
 
         verify(orderRepository, never()).save(any());
     }
-
 
     @Test
     void updateOrderStatus_whenCancellationReleaseFails_recordsCompensation() {
@@ -154,7 +177,8 @@ class OrderServiceTest {
         item.setQuantity(1);
         order.addItem(item);
 
-        when(orderRepository.findById(10L)).thenReturn(Optional.of(order));
+        when(orderRepository.findById(10L))
+                .thenReturn(Optional.of(order));
 
         RuntimeException releaseException =
                 new RuntimeException("Inventory release failed");
@@ -165,7 +189,10 @@ class OrderServiceTest {
 
         RuntimeException thrown = assertThrows(
                 RuntimeException.class,
-                () -> orderService.updateOrderStatus(10L, OrderStatus.CANCELLED)
+                () -> orderService.updateOrderStatus(
+                        10L,
+                        OrderStatus.CANCELLED
+                )
         );
 
         assertSame(releaseException, thrown);
@@ -180,5 +207,4 @@ class OrderServiceTest {
 
         verify(orderRepository, never()).save(any());
     }
-
 }
