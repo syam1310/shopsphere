@@ -30,24 +30,36 @@ public class CheckoutIdempotencyService {
     @Transactional
     public CheckoutRequest markCompleted(
             Long userId, String key, Long orderId) {
-        CheckoutRequest checkout = repository
-                .findByUserIdAndIdempotencyKey(userId, key)
-                .orElseThrow(() ->
-                        new IllegalStateException("Checkout key was not claimed"));
 
-        checkout.setOrderId(orderId);
-        checkout.setStatus(
-                com.shopsphere.order_service.entity.CheckoutStatus.COMPLETED);
-        return repository.save(checkout);
+        int updated = repository.markCompletedIfProcessing(
+                userId, key, orderId);
+
+        if (updated == 0) {
+            CheckoutRequest checkout = repository
+                    .findByUserIdAndIdempotencyKey(userId, key)
+                    .orElseThrow(() ->
+                            new IllegalStateException(
+                                    "Checkout key was not claimed"));
+
+            if (checkout.getStatus()
+                    == com.shopsphere.order_service.entity.CheckoutStatus.COMPLETED
+                    && java.util.Objects.equals(checkout.getOrderId(), orderId)) {
+                return checkout;
+            }
+
+            throw new IllegalStateException(
+                    "Checkout cannot be completed from status: "
+                            + checkout.getStatus());
+        }
+
+        return repository.findByUserIdAndIdempotencyKey(userId, key)
+                .orElseThrow(() ->
+                        new IllegalStateException(
+                                "Completed checkout could not be reloaded"));
     }
 
     @Transactional
     public void markFailed(Long userId, String key) {
-        repository.findByUserIdAndIdempotencyKey(userId, key)
-                .ifPresent(checkout -> {
-                    checkout.setStatus(
-                            com.shopsphere.order_service.entity.CheckoutStatus.FAILED);
-                    repository.save(checkout);
-                });
+        repository.markFailedIfNotCompleted(userId, key);
     }
 }

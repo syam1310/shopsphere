@@ -1,0 +1,31 @@
+server:
+  port: 8085
+
+spring:
+  application:
+    name: cart-service
+
+  datasource:
+    url: jdbc:postgresql://localhost:5437/cart_db
+    username: shopsphere
+    password: shopsphere_password
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+
+logging:
+  level:
+    org.springframework.security: DEBUG
+    com.shopsphere.inventory_service.security: DEBUG
+
+jwt:
+  secret: ${JWT_SECRET}
+
+internal-service:
+  secret: ${INTERNAL_SERVICE_SECRET}

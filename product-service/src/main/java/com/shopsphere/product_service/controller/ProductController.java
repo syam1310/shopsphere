@@ -1,7 +1,8 @@
 package com.shopsphere.product_service.controller;
 
-
-import com.shopsphere.product_service.enity.Product;
+import com.shopsphere.product_service.dto.CreateProductRequest;
+import com.shopsphere.product_service.dto.ProductResponse;
+import com.shopsphere.product_service.dto.UpdateProductRequest;
 import com.shopsphere.product_service.service.ProductService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -21,29 +22,35 @@ public class ProductController {
     }
 
     @PostMapping
-    public ResponseEntity<Product> createProduct(@Valid @RequestBody Product product) {
-        Product createdProduct = productService.createProduct(product);
-        return ResponseEntity.status(HttpStatus.CREATED).body(createdProduct);
+    public ResponseEntity<ProductResponse> createProduct(
+            @Valid @RequestBody CreateProductRequest request) {
+
+        ProductResponse createdProduct =
+                productService.createProduct(request);
+
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(createdProduct);
     }
 
     @GetMapping
-    public ResponseEntity<List<Product>> getAllProducts() {
+    public ResponseEntity<List<ProductResponse>> getAllProducts() {
         return ResponseEntity.ok(productService.getAllProducts());
     }
 
     @GetMapping("/{id}")
-    public ResponseEntity<Product> getProductById(@PathVariable Long id) {
+    public ResponseEntity<ProductResponse> getProductById(
+            @PathVariable Long id) {
+
         return ResponseEntity.ok(productService.getProductById(id));
     }
 
     @PutMapping("/{id}")
-    public ResponseEntity<Product> updateProduct(
+    public ResponseEntity<ProductResponse> updateProduct(
             @PathVariable Long id,
-            @Valid
-            @RequestBody Product product) {
+            @Valid @RequestBody UpdateProductRequest request) {
 
         return ResponseEntity.ok(
-                productService.updateProduct(id, product)
+                productService.updateProduct(id, request)
         );
     }
 
@@ -52,6 +59,4 @@ public class ProductController {
         productService.deleteProduct(id);
         return ResponseEntity.noContent().build();
     }
-
-
 }

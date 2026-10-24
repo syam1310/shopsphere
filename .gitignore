@@ -1,3 +1,6 @@
 .env
 .DS_Store
 .idea/
+# Local backup files
+docker-compose.yml.backup
+*.java.bak

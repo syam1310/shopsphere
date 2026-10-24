@@ -1,152 +1,181 @@
-# ShopSphere — E-Commerce Microservices Platform
+# ShopSphere
 
-ShopSphere is a Java-based e-commerce backend built with Spring Boot and a microservices architecture. The project
-demonstrates REST API development, JWT authentication, service-to-service communication, inventory reservation, and
-resilient order processing.
+ShopSphere is a local microservices-based shopping application. The current setup contains five Spring Boot services and five PostgreSQL databases, with each service exposed on its own port.
 
-## Architecture
+> **Scope note:** This README documents the configuration and flows verified in the current development environment. It does not claim that every production-readiness requirement has been completed.
 
-```text
-                     Client / Postman
-                            |
-            +---------------+---------------+
-            |               |               |
-       User Service    Product Service   Order Service
-         :8081             :8082             :8084
-                                               |
-                                         Inventory Service
-                                              :8083
-            |               |               |               |
-        user_db          product_db      order_db       inventory_db
-            +--------------- PostgreSQL -------------------+
-```
+## Services and ports
 
-Each service owns its application logic and database. The Order Service communicates with the Product and Inventory
-services to validate products and reserve stock.
+| Component | Local URL / port | Database |
+|---|---|---|
+| User Service | `http://localhost:8081` | `user_db` |
+| Product Service | `http://localhost:8082` | `product_db` |
+| Inventory Service | `http://localhost:8083` | `inventory_db` |
+| Order Service | `http://localhost:8084` | `order_db` |
+| Cart Service | `http://localhost:8085` | `cart_db` |
 
-## Technology Stack
+PostgreSQL is exposed locally on these ports:
 
-- **Language:** Java 21
-- **Framework:** Spring Boot
-- **Persistence:** Spring Data JPA, Hibernate, PostgreSQL
-- **Security:** Spring Security, JWT, role-based authorization
-- **API documentation:** OpenAPI / Swagger UI
-- **Build:** Maven
-- **Testing:** JUnit, Mockito, Testcontainers
-- **Infrastructure:** Docker, Docker Compose
+| Database | Host port |
+|---|---:|
+| User DB | `5433` |
+| Product DB | `5434` |
+| Inventory DB | `5435` |
+| Order DB | `5436` |
+| Cart DB | `5437` |
 
-## Implemented Services
+The PostgreSQL containers use the `shopsphere` database user in the current local setup. Keep passwords and tokens out of source control and shared logs.
 
-### 1. User Service — `8081`
+## Prerequisites
 
-- User registration and management
-- Password hashing with BCrypt
-- JWT access and refresh tokens
-- Role-based authorization
-- Logout and refresh-token revocation
-
-### 2. Product Service — `8082`
-
-- Product CRUD REST APIs
-- Request validation and error handling
-- JWT-protected endpoints and role-based access
-
-### 3. Inventory Service — `8083`
-
-- Inventory retrieval and management
-- Stock reservation and release
-- Idempotent reservation operations
-- Internal service authentication
-- Protection against invalid stock quantities
-
-### 4. Order Service — `8084`
-
-- Create and retrieve orders
-- Product validation through the Product Service
-- Inventory reservation through the Inventory Service
-- Order status management
-- Compensation handling when order processing fails
-- Scheduled retries for failed inventory releases
-- PostgreSQL concurrency testing for compensation claims
-
-## API Documentation
-
-When a service is running, Swagger UI is available at:
-
-| Service   | Swagger UI                                  |
-|-----------|---------------------------------------------|
-| User      | http://localhost:8081/swagger-ui/index.html |
-| Product   | http://localhost:8082/swagger-ui/index.html |
-| Inventory | http://localhost:8083/swagger-ui/index.html |
-| Order     | http://localhost:8084/swagger-ui/index.html |
-
-Protected endpoints require the appropriate authentication or authorization.
-
-## Running Locally
-
-### Prerequisites
-
+- Docker Desktop with Docker Compose
 - Java 21
-- Docker Desktop
-- Maven, or the included Maven wrapper
+- Maven (or the repository's Maven Wrapper)
+- `curl` for manual API checks
 
-### 1. Clone the repository
+## Configuration
 
-```bash
-git clone https://github.com/syam1310/shopsphere.git
-cd shopsphere
+Create or update a local `.env` file at the project root. The current Compose configuration expects these variables:
+
+```dotenv
+JWT_SECRET=<use-a-long-random-secret>
+INTERNAL_SERVICE_SECRET=<use-a-separate-long-random-secret>
+PRODUCT_SERVICE_URL=http://product-service:8082
+INVENTORY_SERVICE_URL=http://inventory-service:8083
 ```
 
-### 2. Configure environment variables
+Use actual secret values only in your local `.env`; never paste them into chat, documentation, Git, or screenshots. `.env` is currently ignored by Git. If a secret or token was exposed and is still valid, rotate it.
 
-Create a local `.env` file from the project's required configuration. Define strong, locally generated values for
-`JWT_SECRET` and `INTERNAL_SERVICE_SECRET`, and configure the service URLs.
+## Build the services
 
-**Never commit `.env` or real credentials to Git.**
+The service Dockerfiles copy the packaged JAR from each service's `target/` directory. Build the JARs before building application images.
 
-### 3. Start PostgreSQL
-
-```bash
-docker compose up -d
-```
-
-Wait for the database containers to become healthy before starting the services.
-
-### 4. Start the services
-
-Start each service from its own directory, in separate terminals. Load the root `.env` variables into each terminal
-before launching the service.
-
-For example:
+From the repository root, run the following for each service:
 
 ```bash
-cd user-service
-./mvnw spring-boot:run
+cd user-service && ./mvnw clean package -DskipTests && cd ..
+cd product-service && ./mvnw clean package -DskipTests && cd ..
+cd inventory-service && ./mvnw clean package -DskipTests && cd ..
+cd order-service && ./mvnw clean package -DskipTests && cd ..
+cd cart-service && ./mvnw clean package -DskipTests && cd ..
 ```
 
-Repeat for `product-service`, `inventory-service`, and `order-service`.
+These commands skip automated tests for the current fast local workflow. Run your test suite before a production release.
 
-Ensure each service's database and required environment variables are configured before startup.
+## Start and inspect the stack
 
-## Testing
-
-Run the tests for an individual service using its Maven wrapper:
+Validate the Compose file:
 
 ```bash
-./mvnw test
+docker compose -p shopsphere config --quiet
 ```
 
-Run this command from the service directory. The Order Service includes tests for compensation retry behavior and a
-PostgreSQL-backed concurrency test using Testcontainers.
+Start or update the application services:
 
-## Planned Enhancements
+```bash
+docker compose -p shopsphere up -d --build
+```
 
-- API Gateway
-- Redis caching
-- Apache Kafka for event-driven communication
-- Notification Service
-- Docker-based deployment of all application services
+Inspect services managed by this Compose project:
 
-## Repository
+```bash
+docker compose -p shopsphere ps
+```
 
-GitHub: https://github.com/syam1310/shopsphere
+The Cart database in the current environment was originally created under a separate Compose project and connected to the `shopsphere_default` network with the `cart-db` alias. Because of that history, it may not appear in `docker compose -p shopsphere ps`; check it separately:
+
+```bash
+docker ps --filter "name=shopsphere-cart-db" \
+  --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+```
+
+**Do not use `docker compose down -v`** as a routine cleanup command. The `-v` flag removes Compose-managed volumes and can delete local database data.
+
+## Health checks
+
+Check all five application health endpoints:
+
+```bash
+for port in 8081 8082 8083 8084 8085; do
+  echo "=== Port $port ==="
+  curl -sS --max-time 3 "http://localhost:$port/actuator/health"
+  echo
+done
+```
+
+Each service returned `{"groups":["liveness","readiness"],"status":"UP"}` in the verified local run.
+
+## Verified API flows
+
+These flows have been manually exercised in the current development environment:
+
+- Login and authenticated product/cart requests.
+- Add an item to the cart and retrieve the cart.
+- Checkout with `POST /api/orders/checkout` and the required `Idempotency-Key` header.
+- Retry checkout using the **same** idempotency key and receive the existing order rather than creating a duplicate.
+- Cancel a pending order using `PATCH /api/orders/{id}/status?status=CANCELLED`.
+- Verify that the order's inventory reservation changes to `RELEASED`.
+
+### Example: checkout
+
+Checkout requires a bearer token and an idempotency key. Replace the placeholder with a token obtained from the login flow; do not commit or share real tokens.
+
+```bash
+curl -i -X POST "http://localhost:8084/api/orders/checkout" \
+  -H "Authorization: Bearer <ACCESS_TOKEN>" \
+  -H "Idempotency-Key: <UNIQUE_KEY_FOR_THIS_CHECKOUT>"
+```
+
+For a retry of the same logical checkout, reuse the same idempotency key. Use a new key for a new checkout.
+
+### Example: cancel an order
+
+Only cancel an order you intend to cancel. Customers may cancel their own pending orders according to the current controller logic.
+
+```bash
+curl -i -X PATCH \
+  "http://localhost:8084/api/orders/<ORDER_ID>/status?status=CANCELLED" \
+  -H "Authorization: Bearer <ACCESS_TOKEN>"
+```
+
+The cancellation flow attempts to release the order's inventory reservations. Check the API response and reservation record to confirm the result.
+
+## Useful database inspection commands
+
+Inspect the order table:
+
+```bash
+docker exec -it shopsphere-order-db psql \
+  -U shopsphere -d order_db \
+  -c "\\dt public.*"
+```
+
+Inspect orders:
+
+```bash
+docker exec -it shopsphere-order-db psql \
+  -U shopsphere -d order_db \
+  -c "SELECT id, user_id, idempotency_key, status, total_amount FROM public.customer_orders ORDER BY id DESC LIMIT 10;"
+```
+
+Inspect inventory reservations:
+
+```bash
+docker exec -it shopsphere-inventory-db psql \
+  -U shopsphere -d inventory_db \
+  -c "SELECT reservation_id, product_id, quantity, status FROM public.inventory_reservations ORDER BY reservation_id DESC LIMIT 10;"
+```
+
+These are read-only inspection queries.
+
+## Troubleshooting
+
+- **A health endpoint fails:** check the service logs, for example `docker compose -p shopsphere logs --tail=100 order-service`.
+- **A database connection fails:** confirm the database container is running and healthy, and that the application is using the correct Compose network hostname and database name.
+- **A protected endpoint returns `401` or `403`:** check that the access token is valid and that the authenticated user has the required permission.
+- **A checkout retry returns an existing order:** this is expected when the same user and idempotency key are reused.
+- **A reservation remains reserved after cancellation:** inspect the order-service logs and the `inventory_compensations` table before attempting any manual database changes.
+
+## Current status
+
+The five application health endpoints returned `UP`. The checkout/idempotency flow and cancellation/inventory-release flow were manually verified in the current local environment. Comprehensive automated tests, production deployment, monitoring, and broader security review are not claimed as complete by this README.

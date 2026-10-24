@@ -163,6 +163,7 @@ class OrderServiceTest {
         verify(orderRepository, never()).save(any());
     }
 
+
     @Test
     void updateOrderStatus_whenCancellationReleaseFails_recordsCompensation() {
         UUID reservationId = UUID.randomUUID();
@@ -187,16 +188,16 @@ class OrderServiceTest {
                 .when(inventoryClient)
                 .releaseInventory(reservationId, 3L, 1);
 
-        RuntimeException thrown = assertThrows(
-                RuntimeException.class,
-                () -> orderService.updateOrderStatus(
-                        10L,
-                        OrderStatus.CANCELLED
-                )
+        orderService.updateOrderStatus(
+                10L,
+                OrderStatus.CANCELLED
         );
 
-        assertSame(releaseException, thrown);
-        assertEquals(OrderStatus.PENDING, order.getStatus());
+        assertEquals(OrderStatus.CANCELLED, order.getStatus());
+
+        verify(inventoryClient).releaseInventory(
+                reservationId, 3L, 1
+        );
 
         verify(compensationService).recordFailedRelease(
                 reservationId,
@@ -205,6 +206,7 @@ class OrderServiceTest {
                 releaseException
         );
 
-        verify(orderRepository, never()).save(any());
+        verify(orderRepository).save(order);
     }
+
 }

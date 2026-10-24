@@ -37,4 +37,17 @@ public class PaymentController {
         return ResponseEntity.ok(
                 paymentService.getPayment(id, userId));
     }
+
+
+    @GetMapping("/internal/by-idempotency-key")
+    public ResponseEntity<PaymentResponse> getPaymentByIdempotencyKey(
+            @RequestParam String key,
+            @RequestParam Long userId) {
+
+        PaymentResponse response = paymentService
+                .getPaymentByIdempotencyKey(key, userId);
+
+        return ResponseEntity.ok(response);
+    }
+
 }

@@ -19,6 +19,7 @@ public class PaymentService {
         this.paymentRepository = paymentRepository;
     }
 
+
     @Transactional
     public PaymentResponse createPayment(
             CreatePaymentRequest request,
@@ -34,39 +35,45 @@ public class PaymentService {
                     "Idempotency-Key must not exceed 100 characters");
         }
 
-        var existing = paymentRepository
-                .findByIdempotencyKey(idempotencyKey);
-
-        if (existing.isPresent()) {
-            Payment payment = existing.get();
-
-            if (!payment.getOrderId().equals(request.orderId())
-                    || !payment.getUserId().equals(request.userId())
-                    || payment.getAmount().compareTo(request.amount()) != 0
-                    || payment.getPaymentMethod() != request.paymentMethod()) {
-                throw new IllegalArgumentException(
-                        "Idempotency-Key was already used with different payment details");
-            }
-
-            return PaymentResponse.from(payment);
+        if (request == null
+                || request.orderId() == null
+                || request.userId() == null
+                || request.amount() == null
+                || request.amount().signum() <= 0
+                || request.paymentMethod() == null) {
+            throw new IllegalArgumentException(
+                    "Valid payment details are required");
         }
 
-        Payment payment = new Payment();
-        payment.setOrderId(request.orderId());
-        payment.setUserId(request.userId());
-        payment.setAmount(request.amount());
-        payment.setPaymentMethod(request.paymentMethod());
-        payment.setIdempotencyKey(idempotencyKey);
-
-        // Temporary simulation rule for local development only.
-        payment.setStatus(
+        PaymentStatus status =
                 request.amount().compareTo(new BigDecimal("1000.00")) < 0
                         ? PaymentStatus.SUCCESS
-                        : PaymentStatus.FAILED
-        );
+                        : PaymentStatus.FAILED;
 
-        return PaymentResponse.from(paymentRepository.save(payment));
+        paymentRepository.insertIfIdempotencyKeyAbsent(
+                request.orderId(),
+                request.userId(),
+                request.amount(),
+                request.paymentMethod().name(),
+                status.name(),
+                idempotencyKey);
+
+        Payment payment = paymentRepository
+                .findByIdempotencyKey(idempotencyKey)
+                .orElseThrow(() -> new IllegalStateException(
+                        "Payment was not found after the idempotent insert"));
+
+        if (!payment.getOrderId().equals(request.orderId())
+                || !payment.getUserId().equals(request.userId())
+                || payment.getAmount().compareTo(request.amount()) != 0
+                || payment.getPaymentMethod() != request.paymentMethod()) {
+            throw new IllegalArgumentException(
+                    "Idempotency-Key was already used with different payment details");
+        }
+
+        return PaymentResponse.from(payment);
     }
+
 
     @Transactional(readOnly = true)
     public PaymentResponse getPayment(Long paymentId, Long userId) {
@@ -74,13 +81,6 @@ public class PaymentService {
                 .map(PaymentResponse::from)
                 .orElseThrow(() -> new PaymentNotFoundException(paymentId));
     }
-
-    public static class PaymentNotFoundException extends RuntimeException {
-        public PaymentNotFoundException(Long paymentId) {
-            super("Payment not found: " + paymentId);
-        }
-    }
-
 
     @Transactional(readOnly = true)
     public PaymentResponse getPaymentByIdempotencyKey(
@@ -105,6 +105,16 @@ public class PaymentService {
                 .orElseThrow(() ->
                         new PaymentNotFoundException(
                                 "No payment found for the supplied checkout key"));
+    }
+
+    public static class PaymentNotFoundException extends RuntimeException {
+        public PaymentNotFoundException(Long paymentId) {
+            super("Payment not found: " + paymentId);
+        }
+
+        public PaymentNotFoundException(String msg) {
+            super(msg);
+        }
     }
 
 }

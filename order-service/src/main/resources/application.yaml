@@ -32,11 +32,16 @@ logging:
 jwt:
   secret: ${JWT_SECRET}
 
-
-
 product-service:
   base-url: ${PRODUCT_SERVICE_URL:http://localhost:8082}
 
 inventory-service:
   base-url: ${INVENTORY_SERVICE_URL:http://localhost:8083}
+  internal-secret: ${INTERNAL_SERVICE_SECRET}
+
+cart-service:
+  base-url: ${CART_SERVICE_URL:http://localhost:8085}
+
+payment-service:
+  base-url: ${PAYMENT_SERVICE_URL:http://localhost:8086}
   internal-secret: ${INTERNAL_SERVICE_SECRET}

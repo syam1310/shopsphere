@@ -52,16 +52,37 @@ public class OrderService {
         return orderRepository.findByUserId(userId);
     }
 
+
+    @Transactional
+    public Order createOrder(
+            CreateOrderRequest request,
+            Long userId,
+            String token,
+            String idempotencyKey) {
+
+        return createOrderInternal(request, userId, token, idempotencyKey);
+    }
+
     @Transactional
     public Order createOrder(
             CreateOrderRequest request,
             Long userId,
             String token) {
 
+        return createOrderInternal(request, userId, token, null);
+    }
+
+    private Order createOrderInternal(
+            CreateOrderRequest request,
+            Long userId,
+            String token,
+            String idempotencyKey) {
+
         BigDecimal totalAmount = BigDecimal.ZERO;
         Order order = new Order();
+        order.setUserId(userId);
+        order.setIdempotencyKey(idempotencyKey);
 
-        // Keep the actual order items so compensation uses the same reservation IDs.
         List<OrderItem> reservedItems = new ArrayList<>();
 
         try {
@@ -114,10 +135,10 @@ public class OrderService {
                 reservedItems.add(orderItem);
             }
 
-            order.setUserId(userId);
             order.setTotalAmount(totalAmount);
             order.setStatus(OrderStatus.PENDING);
 
+            // Save the order with its idempotency key on the first save.
             return orderRepository.save(order);
 
         } catch (RuntimeException exception) {
@@ -126,8 +147,8 @@ public class OrderService {
                     inventoryClient.releaseInventory(
                             reservedItem.getReservationId(),
                             reservedItem.getProductId(),
-                            reservedItem.getQuantity()
-                    );
+                            reservedItem.getQuantity());
+
                 } catch (RuntimeException releaseException) {
                     exception.addSuppressed(releaseException);
 
@@ -136,8 +157,8 @@ public class OrderService {
                                 reservedItem.getReservationId(),
                                 reservedItem.getProductId(),
                                 reservedItem.getQuantity(),
-                                releaseException
-                        );
+                                releaseException);
+
                     } catch (RuntimeException persistenceException) {
                         exception.addSuppressed(persistenceException);
                     }
@@ -147,6 +168,7 @@ public class OrderService {
             throw exception;
         }
     }
+
 
     @Transactional
     public Order updateOrderStatus(Long orderId, OrderStatus newStatus) {
@@ -168,33 +190,34 @@ public class OrderService {
         if (newStatus == OrderStatus.CANCELLED) {
             for (OrderItem item : order.getItems()) {
                 try {
-                    if (item.getReservationId() != null) {
-                        // Idempotent release for orders created with reservation IDs.
-                        inventoryClient.releaseInventory(
-                                item.getReservationId(),
-                                item.getProductId(),
-                                item.getQuantity());
-                    } else {
-                        // Legacy orders without reservation IDs use the legacy API.
-                        inventoryClient.releaseInventory(
-                                null,
-                                item.getProductId(),
-                                item.getQuantity());
-                    }
+                    inventoryClient.releaseInventory(
+                            item.getReservationId(),
+                            item.getProductId(),
+                            item.getQuantity());
+
                 } catch (RuntimeException releaseException) {
-                    if (item.getReservationId() != null) {
-                        try {
-                            compensationService.recordFailedRelease(
-                                    item.getReservationId(),
-                                    item.getProductId(),
-                                    item.getQuantity(),
-                                    releaseException);
-                        } catch (RuntimeException persistenceException) {
-                            releaseException.addSuppressed(persistenceException);
-                        }
+
+                    // Legacy items have no reservation ID, so they cannot
+                    // be safely queued in the reservation-based retry system.
+                    if (item.getReservationId() == null) {
+                        throw releaseException;
                     }
 
-                    throw releaseException;
+                    try {
+                        // Persist recovery in a separate transaction.
+                        compensationService.recordFailedRelease(
+                                item.getReservationId(),
+                                item.getProductId(),
+                                item.getQuantity(),
+                                releaseException);
+
+                        // Continue cancellation only after recording succeeds.
+                    } catch (RuntimeException persistenceException) {
+                        releaseException.addSuppressed(persistenceException);
+
+                        // Recovery was not durably recorded; fail visibly.
+                        throw releaseException;
+                    }
                 }
             }
         }
@@ -202,5 +225,12 @@ public class OrderService {
 
         order.setStatus(newStatus);
         return orderRepository.save(order);
+    }
+
+    public Optional<Order> findByUserIdAndIdempotencyKey(
+            Long userId,
+            String idempotencyKey) {
+        return orderRepository.findByUserIdAndIdempotencyKey(
+                userId, idempotencyKey);
     }
 }

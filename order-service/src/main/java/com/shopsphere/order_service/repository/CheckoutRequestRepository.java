@@ -28,4 +28,34 @@ public interface CheckoutRequestRepository
             @Param("userId") Long userId,
             @Param("key") String idempotencyKey
     );
+
+    @Modifying
+    @Query(value = """
+            UPDATE checkout_requests
+            SET status = 'FAILED',
+                updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = :userId
+              AND idempotency_key = :key
+              AND status <> 'COMPLETED'
+            """, nativeQuery = true)
+    int markFailedIfNotCompleted(
+            @Param("userId") Long userId,
+            @Param("key") String idempotencyKey
+    );
+
+    @Modifying
+    @Query(value = """
+            UPDATE checkout_requests
+            SET status = 'COMPLETED',
+                order_id = :orderId,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = :userId
+              AND idempotency_key = :key
+              AND status = 'PROCESSING'
+            """, nativeQuery = true)
+    int markCompletedIfProcessing(
+            @Param("userId") Long userId,
+            @Param("key") String idempotencyKey,
+            @Param("orderId") Long orderId
+    );
 }

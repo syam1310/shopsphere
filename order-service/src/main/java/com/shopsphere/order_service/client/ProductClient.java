@@ -3,12 +3,14 @@ package com.shopsphere.order_service.client;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.shopsphere.order_service.exception.ProductNotFoundException;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 
 import java.math.BigDecimal;
+import java.time.Duration;
 
 @Component
 public class ProductClient {
@@ -17,8 +19,14 @@ public class ProductClient {
 
     public ProductClient(
             @Value("${product-service.base-url}") String baseUrl) {
+        SimpleClientHttpRequestFactory requestFactory =
+                new SimpleClientHttpRequestFactory();
+        requestFactory.setConnectTimeout(Duration.ofSeconds(3));
+        requestFactory.setReadTimeout(Duration.ofSeconds(10));
+
         this.restClient = RestClient.builder()
                 .baseUrl(baseUrl)
+                .requestFactory(requestFactory)
                 .build();
     }
 

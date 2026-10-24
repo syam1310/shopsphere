@@ -1,6 +1,8 @@
 package com.shopsphere.product_service.controller;
 
-import com.shopsphere.product_service.enity.Product;
+import com.shopsphere.product_service.dto.CreateProductRequest;
+import com.shopsphere.product_service.dto.ProductResponse;
+import com.shopsphere.product_service.dto.UpdateProductRequest;
 import com.shopsphere.product_service.exception.ProductNotFoundException;
 import com.shopsphere.product_service.security.JwtService;
 import com.shopsphere.product_service.service.ProductService;
@@ -84,18 +86,9 @@ class ProductControllerTest {
                 }
                 """;
 
-        Product product = new Product();
-        product.setId(1L);
-        product.setName("iPhone 17");
-        product.setDescription("Latest Apple smartphone");
-        product.setPrice(new BigDecimal("79999.99"));
-        product.setQuantity(10);
-        product.setCategory("Electronics");
-        product.setImageUrl("https://example.com/iphone17.jpg");
-        product.setActive(true);
-
-        when(productService.createProduct(any(Product.class)))
-                .thenReturn(product);
+        ProductResponse product = new ProductResponse(1L, "iPhone 17", "Latest Apple smartphone",
+                new BigDecimal("79999.99"), 10, "Electronics", "https://example.com/iphone17.jpg", true, null, null);
+        when(productService.createProduct(any(CreateProductRequest.class))).thenReturn(product);
 
         mockMvc.perform(
                         post("/api/products")
@@ -113,18 +106,9 @@ class ProductControllerTest {
     @Test
     void shouldGetProductByIdSuccessfully() throws Exception {
 
-        Product product = new Product();
-        product.setId(1L);
-        product.setName("iPhone 17");
-        product.setDescription("Latest Apple smartphone");
-        product.setPrice(new BigDecimal("79999.99"));
-        product.setQuantity(10);
-        product.setCategory("Electronics");
-        product.setImageUrl("https://example.com/iphone17.jpg");
-        product.setActive(true);
-
-        when(productService.getProductById(1L))
-                .thenReturn(product);
+        ProductResponse product = new ProductResponse(1L, "iPhone 17", "Latest Apple smartphone",
+                new BigDecimal("79999.99"), 10, "Electronics", "https://example.com/iphone17.jpg", true, null, null);
+        when(productService.getProductById(1L)).thenReturn(product);
 
         mockMvc.perform(
                         get("/api/products/1")
@@ -140,21 +124,10 @@ class ProductControllerTest {
     @Test
     void shouldGetAllProductsSuccessfully() throws Exception {
 
-        Product product1 = new Product();
-        product1.setId(1L);
-        product1.setName("iPhone 17");
-        product1.setPrice(new BigDecimal("79999.99"));
-        product1.setQuantity(10);
-        product1.setCategory("Electronics");
-        product1.setActive(true);
-
-        Product product2 = new Product();
-        product2.setId(2L);
-        product2.setName("MacBook Air");
-        product2.setPrice(new BigDecimal("99999.99"));
-        product2.setQuantity(5);
-        product2.setCategory("Laptops");
-        product2.setActive(true);
+        ProductResponse product1 = new ProductResponse(1L, "iPhone 17", null,
+                new BigDecimal("79999.99"), 10, "Electronics", null, true, null, null);
+        ProductResponse product2 = new ProductResponse(2L, "MacBook Air", null,
+                new BigDecimal("99999.99"), 5, "Laptops", null, true, null, null);
 
         when(productService.getAllProducts())
                 .thenReturn(List.of(product1, product2));
@@ -186,20 +159,9 @@ class ProductControllerTest {
                 }
                 """;
 
-        Product updatedProduct = new Product();
-        updatedProduct.setId(1L);
-        updatedProduct.setName("iPhone 17 Pro");
-        updatedProduct.setDescription("Updated Apple smartphone");
-        updatedProduct.setPrice(new BigDecimal("89999.99"));
-        updatedProduct.setQuantity(15);
-        updatedProduct.setCategory("Electronics");
-        updatedProduct.setImageUrl("https://example.com/iphone17pro.jpg");
-        updatedProduct.setActive(true);
-
-        when(productService.updateProduct(
-                eq(1L),
-                any(Product.class)
-        )).thenReturn(updatedProduct);
+        ProductResponse updatedProduct = new ProductResponse(1L, "iPhone 17 Pro", "Updated Apple smartphone",
+                new BigDecimal("89999.99"), 15, "Electronics", "https://example.com/iphone17pro.jpg", true, null, null);
+        when(productService.updateProduct(eq(1L), any(UpdateProductRequest.class))).thenReturn(updatedProduct);
 
         mockMvc.perform(
                         put("/api/products/1")
@@ -314,7 +276,7 @@ class ProductControllerTest {
 
         when(productService.updateProduct(
                 eq(999L),
-                any(Product.class)
+                any(UpdateProductRequest.class)
         )).thenThrow(new ProductNotFoundException(
                 "Product not found with id: 999"
         ));
@@ -331,7 +293,7 @@ class ProductControllerTest {
 
         verify(productService).updateProduct(
                 eq(999L),
-                any(Product.class)
+                any(UpdateProductRequest.class)
         );
     }
 

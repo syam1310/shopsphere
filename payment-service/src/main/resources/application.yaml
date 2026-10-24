@@ -19,6 +19,9 @@ spring:
       hibernate:
         format_sql: true
 
+internal-service:
+  secret: ${INTERNAL_SERVICE_SECRET}
+
 management:
   endpoints:
     web:

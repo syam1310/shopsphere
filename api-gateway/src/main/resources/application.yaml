@@ -1,3 +1,50 @@
+server:
+  port: 8080
+
 spring:
   application:
     name: api-gateway
+  cloud:
+    gateway:
+      server:
+        webmvc:
+          routes:
+            - id: user-auth
+              uri: ${USER_SERVICE_URL:http://localhost:8081}
+              predicates:
+                - Path=/api/auth/**,/api/users/**,/api/admin/**
+
+            - id: product-service
+              uri: ${PRODUCT_SERVICE_URL:http://host.docker.internal:8082}
+              predicates:
+                - Path=/api/products/**
+
+            - id: inventory-service
+              uri: ${INVENTORY_SERVICE_URL:http://localhost:8083}
+              predicates:
+                - Path=/api/inventory/**
+
+            - id: cart-service
+              uri: ${CART_SERVICE_URL:http://localhost:8085}
+              predicates:
+                - Path=/api/cart/**
+
+            - id: order-service
+              uri: ${ORDER_SERVICE_URL:http://localhost:8084}
+              predicates:
+                - Path=/api/orders/**
+
+            - id: payment-service
+              uri: ${PAYMENT_SERVICE_URL:http://localhost:8086}
+              predicates:
+                - Path=/api/payments/**
+
+logging:
+  level:
+    org.springframework.cloud.gateway: DEBUG
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

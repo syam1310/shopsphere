@@ -1,12 +1,11 @@
 services:
-
   user-db:
     image: postgres:17
     container_name: shopsphere-user-db
     environment:
       POSTGRES_DB: user_db
       POSTGRES_USER: shopsphere
-      POSTGRES_PASSWORD: shopsphere_password
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set}
     ports:
       - "5433:5432"
     volumes:
@@ -23,9 +22,9 @@ services:
     environment:
       POSTGRES_DB: product_db
       POSTGRES_USER: shopsphere
-      POSTGRES_PASSWORD: shopsphere_password
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set}
     ports:
-      - "5434:5432"  # Changed external port to 5434 to avoid conflict
+      - "5434:5432"
     volumes:
       - product_db_data:/var/lib/postgresql/data
     healthcheck:
@@ -40,7 +39,7 @@ services:
     environment:
       POSTGRES_DB: inventory_db
       POSTGRES_USER: shopsphere
-      POSTGRES_PASSWORD: shopsphere_password
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set}
     ports:
       - "5435:5432"
     volumes:
@@ -57,7 +56,7 @@ services:
     environment:
       POSTGRES_DB: order_db
       POSTGRES_USER: shopsphere
-      POSTGRES_PASSWORD: shopsphere_password
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set}
     ports:
       - "5436:5432"
     volumes:
@@ -68,10 +67,182 @@ services:
       timeout: 5s
       retries: 5
 
+  cart-db:
+    image: postgres:17
+    container_name: shopsphere-cart-db
+    environment:
+      POSTGRES_DB: cart_db
+      POSTGRES_USER: shopsphere
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set}
+    ports:
+      - "5437:5432"
+    volumes:
+      - cart_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U shopsphere -d cart_db" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  user-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.user-service
+    container_name: shopsphere-user-service
+    env_file: .env
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://user-db:5432/user_db
+      SPRING_DATASOURCE_USERNAME: shopsphere
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set}
+    ports:
+      - "8081:8081"
+    depends_on:
+      user-db:
+        condition: service_healthy
+
+  product-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.product-service
+    container_name: shopsphere-product-service
+    env_file: .env
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://product-db:5432/product_db
+      SPRING_DATASOURCE_USERNAME: shopsphere
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set}
+    ports:
+      - "8082:8082"
+    depends_on:
+      product-db:
+        condition: service_healthy
+
+  inventory-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.inventory-service
+    container_name: shopsphere-inventory-service
+    env_file: .env
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://inventory-db:5432/inventory_db
+      SPRING_DATASOURCE_USERNAME: shopsphere
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set}
+    ports:
+      - "8083:8083"
+    depends_on:
+      inventory-db:
+        condition: service_healthy
+
+  cart-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.cart-service
+    container_name: shopsphere-cart-service
+    env_file: .env
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://cart-db:5432/cart_db
+      SPRING_DATASOURCE_USERNAME: shopsphere
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set}
+      PRODUCT_SERVICE_URL: http://product-service:8082
+      INVENTORY_SERVICE_URL: http://inventory-service:8083
+    ports:
+      - "8085:8085"
+    depends_on:
+      cart-db:
+        condition: service_healthy
+      product-service:
+        condition: service_started
+      inventory-service:
+        condition: service_started
+
+  order-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.order-service
+    container_name: shopsphere-order-service
+    env_file: .env
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://order-db:5432/order_db
+      SPRING_DATASOURCE_USERNAME: shopsphere
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set}
+      PRODUCT_SERVICE_URL: http://product-service:8082
+      INVENTORY_SERVICE_URL: http://inventory-service:8083
+      CART_SERVICE_URL: http://cart-service:8085
+      PAYMENT_SERVICE_URL: http://payment-service:8086
+    ports:
+      - "8084:8084"
+    depends_on:
+      order-db:
+        condition: service_healthy
+      product-service:
+        condition: service_started
+      inventory-service:
+        condition: service_started
+      cart-service:
+        condition: service_started
+      payment-service:
+        condition: service_started
+
+  payment-db:
+    image: postgres:17
+    container_name: shopsphere-payment-db
+    environment:
+      POSTGRES_DB: payment_db
+      POSTGRES_USER: shopsphere
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set}
+    ports:
+      - "5438:5432"
+    volumes:
+      - payment_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U shopsphere -d payment_db" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  payment-service:
+    build:
+      context: ./payment-service
+      dockerfile: Dockerfile
+    container_name: shopsphere-payment-service
+    env_file: .env
+    environment:
+      PAYMENT_DB_URL: jdbc:postgresql://payment-db:5432/payment_db
+      PAYMENT_DB_USERNAME: shopsphere
+      PAYMENT_DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set}
+      INTERNAL_SERVICE_SECRET: ${INTERNAL_SERVICE_SECRET}
+    ports:
+      - "8086:8086"
+    depends_on:
+      payment-db:
+        condition: service_healthy
+
+
+  api-gateway:
+    build:
+      context: ./api-gateway
+      dockerfile: Dockerfile
+    container_name: shopsphere-api-gateway
+    environment:
+      USER_SERVICE_URL: http://user-service:8081
+      PRODUCT_SERVICE_URL: http://product-service:8082
+      INVENTORY_SERVICE_URL: http://inventory-service:8083
+      CART_SERVICE_URL: http://cart-service:8085
+      ORDER_SERVICE_URL: http://order-service:8084
+      PAYMENT_SERVICE_URL: http://payment-service:8086
+    ports:
+      - "8080:8080"
 
 
 volumes:
   user_db_data:
+    name: shopsphere_user_db_data
   product_db_data:
+    name: shopsphere_product_db_data
   inventory_db_data:
+    name: shopsphere_inventory_db_data
   order_db_data:
+    name: shopsphere_order_db_data
+  cart_db_data:
+    name: shopsphere3_cart_db_data
+  payment_db_data:
+    name: shopsphere_payment_db_data
