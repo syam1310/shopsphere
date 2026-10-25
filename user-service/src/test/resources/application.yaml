@@ -1,2 +1,14 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5433/user_test_db
+    username: shopsphere
+    password: shopsphere_password
+    driver-class-name: org.postgresql.Driver
+
 jwt:
   secret: "test-only-jwt-secret-key-0123456789abcdef0123456789"
+  expiration: 3600000
+
+app:
+  refresh-token:
+    expiration: 2592000000
