@@ -25,6 +25,7 @@ const CATEGORY_IMAGE: Record<string, string> = {
 // unavailable. The API response replaces this list when it succeeds.
 const FALLBACK_CATEGORIES = Object.keys(CATEGORY_IMAGE);
 const PRODUCT_IMAGE_HINTS: Array<[string, string]> = [
+  ['towel', 'cotton-bath-towel'],
   ['mouse', 'shade'], ['headphone', 'shade'], ['backpack', 'shade'], ['daypack', 'shade'],
   ['water bottle', 'shade'], ['shaker bottle', 'shade'], ['cycling bottle', 'shade'], ['flask', 'shade'],
   ['sneaker', 'shade'], ['shoes', 'shade'], ['t-shirt', 'shade'], ['tshirt', 'shade'],
