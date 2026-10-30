@@ -94,6 +94,8 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://user-db:5432/user_db
       SPRING_DATASOURCE_USERNAME: shopsphere
       SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      ADMIN_SETUP_CODE: ${ADMIN_SETUP_CODE:-}
     ports:
       - "8081:8081"
     depends_on:
@@ -110,11 +112,14 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://product-db:5432/product_db
       SPRING_DATASOURCE_USERNAME: shopsphere
       SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set}
+      INVENTORY_SERVICE_URL: http://inventory-service:8083
     ports:
       - "8082:8082"
     depends_on:
       product-db:
         condition: service_healthy
+      inventory-service:
+        condition: service_started
 
   inventory-service:
     build:
@@ -168,6 +173,9 @@ services:
       INVENTORY_SERVICE_URL: http://inventory-service:8083
       CART_SERVICE_URL: http://cart-service:8085
       PAYMENT_SERVICE_URL: http://payment-service:8086
+      USER_SERVICE_URL: http://user-service:8081
+      NOTIFICATION_SERVICE_URL: http://notification-service:8087
+      INTERNAL_SERVICE_SECRET: ${INTERNAL_SERVICE_SECRET:?INTERNAL_SERVICE_SECRET must be set}
     ports:
       - "8084:8084"
     depends_on:
@@ -199,6 +207,25 @@ services:
       timeout: 5s
       retries: 5
 
+
+  notification-db:
+    image: postgres:17
+    container_name: shopsphere-notification-db
+    environment:
+      POSTGRES_DB: notification_db
+      POSTGRES_USER: shopsphere
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set}
+    ports:
+      - "5439:5432"
+    volumes:
+      - notification_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U shopsphere -d notification_db" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+
   payment-service:
     build:
       context: ./payment-service
@@ -229,8 +256,31 @@ services:
       CART_SERVICE_URL: http://cart-service:8085
       ORDER_SERVICE_URL: http://order-service:8084
       PAYMENT_SERVICE_URL: http://payment-service:8086
+      NOTIFICATION_SERVICE_URL: http://notification-service:8087
     ports:
       - "8080:8080"
+
+
+  notification-service:
+    build:
+      context: ./notification-service
+      dockerfile: Dockerfile
+    container_name: shopsphere-notification-service
+    environment:
+      DB_URL: jdbc:postgresql://notification-db:5432/notification_db
+      DB_USERNAME: shopsphere
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set}
+      INTERNAL_SERVICE_SECRET: ${INTERNAL_SERVICE_SECRET:-}
+      MAIL_USERNAME: ${MAIL_USERNAME:-}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+    ports:
+      - "8087:8087"
+    depends_on:
+      notification-db:
+        condition: service_healthy
+
 
 
 volumes:
@@ -246,3 +296,5 @@ volumes:
     name: shopsphere3_cart_db_data
   payment_db_data:
     name: shopsphere_payment_db_data
+  notification_db_data:
+    name: shopsphere_notification_db_data

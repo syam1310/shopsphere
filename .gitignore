@@ -4,3 +4,5 @@
 # Local backup files
 docker-compose.yml.backup
 *.java.bak
+/backups/
+/monitoring/secrets/

@@ -2,6 +2,8 @@ package com.shopsphere.userservice.controller;
 
 import com.shopsphere.userservice.dto.LoginRequest;
 import com.shopsphere.userservice.dto.LoginResponse;
+import com.shopsphere.userservice.dto.GoogleCredentialRequest;
+import com.shopsphere.userservice.dto.AdminSetupRequest;
 import com.shopsphere.userservice.dto.RefreshTokenRequest;
 import com.shopsphere.userservice.service.AuthService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -11,6 +13,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -48,6 +51,25 @@ public class AuthController {
         return ResponseEntity.ok(response);
     }
 
+    @GetMapping("/admin-setup/status")
+    public ResponseEntity<AdminSetupStatus> adminSetupStatus() {
+        return ResponseEntity.ok(new AdminSetupStatus(
+                authService.isInitialAdminSetupAvailable()));
+    }
+
+    @PostMapping("/admin-setup")
+    public ResponseEntity<LoginResponse> setupInitialAdmin(
+            @Valid @RequestBody AdminSetupRequest request) {
+        return ResponseEntity.status(201)
+                .body(authService.setupInitialAdmin(request));
+    }
+
+    @PostMapping("/google")
+    public ResponseEntity<LoginResponse> loginWithGoogle(
+            @Valid @RequestBody GoogleCredentialRequest request) {
+        return ResponseEntity.ok(authService.loginWithGoogle(request.credential()));
+    }
+
     @Operation(
             summary = "Refresh access token",
             description = "Generates a new access token using a valid refresh token"
@@ -83,5 +105,8 @@ public class AuthController {
         authService.logout(request.getRefreshToken());
 
         return ResponseEntity.noContent().build();
+    }
+
+    public record AdminSetupStatus(boolean available) {
     }
 }

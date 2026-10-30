@@ -1,13 +1,17 @@
 spring:
   application:
     name: product-service
+  flyway:
+    baseline-on-migrate: true
+    baseline-version: 1
+    validate-on-migrate: true
   datasource:
     url: jdbc:postgresql://localhost:5434/product_db
     username: shopsphere
     password: shopsphere_password
   jpa:
     hibernate:
-      ddl-auto: update
+      ddl-auto: validate
     show-sql: false
 
 server:
@@ -16,8 +20,21 @@ server:
 jwt:
   secret: ${JWT_SECRET}
 
+inventory-service:
+  url: ${INVENTORY_SERVICE_URL:http://localhost:8083}
+
 logging:
   level:
     com:
       shopsphere:
         product_service: INFO
+
+management:
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus

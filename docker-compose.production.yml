@@ -1,0 +1,184 @@
+# Production ingress overlay. Use with docker-compose.yml after configuring .env.
+# Only Caddy publishes ports; databases and application services stay on the
+# private Compose network.
+services:
+  user-db:
+    ports: !reset []
+    restart: unless-stopped
+
+  product-db:
+    ports: !reset []
+    restart: unless-stopped
+
+  inventory-db:
+    ports: !reset []
+    restart: unless-stopped
+
+  order-db:
+    ports: !reset []
+    restart: unless-stopped
+
+  cart-db:
+    ports: !reset []
+    restart: unless-stopped
+
+  payment-db:
+    ports: !reset []
+    restart: unless-stopped
+
+  notification-db:
+    ports: !reset []
+    restart: unless-stopped
+
+  user-service:
+    ports: !reset []
+    env_file: !reset []
+    environment:
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      ADMIN_SETUP_CODE: ${ADMIN_SETUP_CODE:-}
+    restart: unless-stopped
+
+  product-service:
+    ports: !reset []
+    env_file: !reset []
+    environment:
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
+    restart: unless-stopped
+
+  inventory-service:
+    ports: !reset []
+    env_file: !reset []
+    environment:
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
+      INTERNAL_SERVICE_SECRET: ${INTERNAL_SERVICE_SECRET:?INTERNAL_SERVICE_SECRET must be set}
+    restart: unless-stopped
+
+  cart-service:
+    ports: !reset []
+    env_file: !reset []
+    environment:
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
+      INTERNAL_SERVICE_SECRET: ${INTERNAL_SERVICE_SECRET:?INTERNAL_SERVICE_SECRET must be set}
+    restart: unless-stopped
+
+  order-service:
+    ports: !reset []
+    env_file: !reset []
+    environment:
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
+      INTERNAL_SERVICE_SECRET: ${INTERNAL_SERVICE_SECRET:?INTERNAL_SERVICE_SECRET must be set}
+    restart: unless-stopped
+
+  payment-service:
+    ports: !reset []
+    env_file: !reset []
+    restart: unless-stopped
+
+  notification-service:
+    ports: !reset []
+    env_file: !reset []
+    environment:
+      INTERNAL_SERVICE_SECRET: ${INTERNAL_SERVICE_SECRET:?INTERNAL_SERVICE_SECRET must be set}
+      MAIL_USERNAME: ${MAIL_USERNAME:-}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+    restart: unless-stopped
+
+  api-gateway:
+    ports: !reset []
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+    depends_on:
+      - api-gateway
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    environment:
+      SHOPSPHERE_DOMAIN: ${SHOPSPHERE_DOMAIN:?Set SHOPSPHERE_DOMAIN to a DNS name pointing at this host}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - frontend
+    restart: unless-stopped
+
+  blackbox-exporter:
+    image: prom/blackbox-exporter:v0.29.1
+    command:
+      - --config.file=/etc/blackbox_exporter/config.yml
+    volumes:
+      - ./monitoring/blackbox/config.yml:/etc/blackbox_exporter/config.yml:ro
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.15.1
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --web.enable-lifecycle
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/shopsphere-alerts.yml:/etc/prometheus/shopsphere-alerts.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    depends_on:
+      - api-gateway
+      - alertmanager
+    restart: unless-stopped
+
+  alertmanager:
+    image: prom/alertmanager:v0.34.2
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    volumes:
+      - ./monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+    secrets:
+      - alertmanager_slack_webhook
+    ports:
+      - "127.0.0.1:9093:9093"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:13.2.4
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD must be set}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+secrets:
+  alertmanager_slack_webhook:
+    file: ${ALERTMANAGER_SLACK_WEBHOOK_FILE:?Set ALERTMANAGER_SLACK_WEBHOOK_FILE to a protected file containing a Slack incoming webhook URL}
+
+volumes:
+  caddy_data:
+  caddy_config:
+  prometheus_data:
+  alertmanager_data:
+  grafana_data:

@@ -39,12 +39,22 @@ spring:
               predicates:
                 - Path=/api/payments/**
 
+            - id: notification-service
+              uri: ${NOTIFICATION_SERVICE_URL:http://localhost:8087}
+              predicates:
+                - Path=/api/notifications/**
+
+
 logging:
   level:
     org.springframework.cloud.gateway: DEBUG
 
 management:
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,prometheus

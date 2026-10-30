@@ -103,6 +103,34 @@ class PaymentServiceTest {
     }
 
     @Test
+    void createPayment_whenAmountIsAboveDemoThreshold_stillSimulatesSuccess() {
+        BigDecimal highAmount = new BigDecimal("25000.00");
+        when(paymentRepository.insertIfIdempotencyKeyAbsent(
+                eq(ORDER_ID),
+                eq(USER_ID),
+                eq(highAmount),
+                eq(PaymentMethod.CARD.name()),
+                eq(PaymentStatus.SUCCESS.name()),
+                eq(KEY)))
+                .thenReturn(1);
+
+        Payment payment = payment(PaymentStatus.SUCCESS);
+        payment.setAmount(highAmount);
+        payment.setPaymentMethod(PaymentMethod.CARD);
+        when(paymentRepository.findByIdempotencyKey(KEY))
+                .thenReturn(Optional.of(payment));
+
+        PaymentResponse response = paymentService.createPayment(
+                request(highAmount, PaymentMethod.CARD), KEY);
+
+        assertEquals(PaymentStatus.SUCCESS, response.status());
+        assertEquals(highAmount, response.amount());
+        verify(paymentRepository).insertIfIdempotencyKeyAbsent(
+                eq(ORDER_ID), eq(USER_ID), eq(highAmount),
+                eq(PaymentMethod.CARD.name()), eq(PaymentStatus.SUCCESS.name()), eq(KEY));
+    }
+
+    @Test
     void createPayment_whenSameKeyHasDifferentPaymentMethod_rejectsRequest() {
         Payment existing = payment(PaymentStatus.SUCCESS);
 

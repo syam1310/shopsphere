@@ -5,6 +5,10 @@ spring:
   application:
     name: payment-service
 
+  flyway:
+    baseline-on-migrate: true
+    baseline-version: 1
+    validate-on-migrate: true
   datasource:
     url: ${PAYMENT_DB_URL:jdbc:postgresql://localhost:5438/payment_db}
     username: ${PAYMENT_DB_USERNAME:shopsphere}
@@ -13,7 +17,7 @@ spring:
 
   jpa:
     hibernate:
-      ddl-auto: update
+      ddl-auto: validate
     show-sql: false
     properties:
       hibernate:
@@ -23,7 +27,11 @@ internal-service:
   secret: ${INTERNAL_SERVICE_SECRET}
 
 management:
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,prometheus

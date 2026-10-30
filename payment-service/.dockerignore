@@ -1,0 +1,5 @@
+.env
+.env.*
+.git
+target/*.original
+target/test-classes

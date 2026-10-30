@@ -22,6 +22,8 @@ public class User {
     private String email;
     @Column(nullable = false)
     private String password;
+    @Column(name = "google_subject", unique = true)
+    private String googleSubject;
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private Role role;

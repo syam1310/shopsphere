@@ -11,6 +11,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.http.MediaType;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -142,6 +144,30 @@ class ProductControllerTest {
                 .andExpect(jsonPath("$[0].name").value("iPhone 17"))
                 .andExpect(jsonPath("$[1].id").value(2))
                 .andExpect(jsonPath("$[1].name").value("MacBook Air"));
+    }
+
+    @Test
+    void shouldReturnPagedCatalog() throws Exception {
+        ProductResponse product = new ProductResponse(5000002L, "Wireless Mouse", "Mouse",
+                new BigDecimal("499.00"), 30, "Electronics", null, true, null, null);
+        when(productService.getProducts(eq(0), eq(48), eq("Electronics"), eq("Mouse")))
+                .thenReturn(new PageImpl<>(List.of(product), PageRequest.of(0, 48), 100));
+
+        mockMvc.perform(get("/api/products/catalog")
+                        .param("page", "0").param("size", "48")
+                        .param("category", "Electronics").param("search", "Mouse"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(1))
+                .andExpect(jsonPath("$.totalElements").value(100))
+                .andExpect(jsonPath("$.content[0].id").value(5000002));
+    }
+
+    @Test
+    void shouldRejectCatalogPageSizeOverMaximum() throws Exception {
+        mockMvc.perform(get("/api/products/catalog").param("size", "101"))
+                .andExpect(status().isBadRequest());
+
+        verifyNoInteractions(productService);
     }
 
     @Test

@@ -1,6 +1,7 @@
 package com.shopsphere.inventory_service.controller;
 
 import com.shopsphere.inventory_service.dto.CreateInventoryRequest;
+import com.shopsphere.inventory_service.dto.InventoryAvailabilityResponse;
 import com.shopsphere.inventory_service.dto.ReleaseInventoryRequest;
 import com.shopsphere.inventory_service.dto.ReserveInventoryRequest;
 import com.shopsphere.inventory_service.entity.Inventory;
@@ -23,6 +24,12 @@ public class InventoryController {
     @GetMapping
     public List<Inventory> getAllInventory() {
         return inventoryService.getAllInventory();
+    }
+
+    @GetMapping("/availability")
+    public List<InventoryAvailabilityResponse> getAvailability(
+            @RequestParam(required = false) List<Long> productIds) {
+        return inventoryService.getAvailability(productIds);
     }
 
     @GetMapping("/product/{productId}")

@@ -1,16 +1,24 @@
 package com.shopsphere.product_service.service;
 
 import com.shopsphere.product_service.dto.CreateProductRequest;
+import com.shopsphere.product_service.client.InventoryClient;
+import com.shopsphere.product_service.dto.InventoryAvailability;
 import com.shopsphere.product_service.dto.ProductResponse;
 import com.shopsphere.product_service.dto.UpdateProductRequest;
 import com.shopsphere.product_service.enity.Product;
 import com.shopsphere.product_service.exception.ProductNotFoundException;
 import com.shopsphere.product_service.repository.ProductRepository;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 @Service
 public class ProductService {
@@ -19,9 +27,18 @@ public class ProductService {
             LoggerFactory.getLogger(ProductService.class);
 
     private final ProductRepository productRepository;
+    private final InventoryClient inventoryClient;
 
+    @Autowired
+    public ProductService(ProductRepository productRepository, InventoryClient inventoryClient) {
+        this.productRepository = productRepository;
+        this.inventoryClient = inventoryClient;
+    }
+
+    // Kept for focused unit tests that do not start the inventory service.
     public ProductService(ProductRepository productRepository) {
         this.productRepository = productRepository;
+        this.inventoryClient = null;
     }
 
     public ProductResponse createProduct(CreateProductRequest request) {
@@ -36,16 +53,31 @@ public class ProductService {
         product.setImageUrl(request.imageUrl());
         product.setActive(true);
 
-        return toResponse(productRepository.save(product));
+        Product saved = productRepository.save(product);
+        return toResponse(saved, availability(List.of(saved.getId())));
     }
 
     public List<ProductResponse> getAllProducts() {
         log.info("Fetching all products");
 
-        return productRepository.findAll()
-                .stream()
-                .map(this::toResponse)
+        List<Product> rows = productRepository.findAll(PageRequest.of(0, 48, Sort.by("id"))).getContent();
+        Map<Long, Integer> available = availability(rows.stream().map(Product::getId).toList());
+        return rows.stream()
+                .map(product -> toResponse(product, available))
                 .toList();
+    }
+
+    public Page<ProductResponse> getProducts(int page, int size, String category, String search) {
+        Page<Product> rows = productRepository.searchActive(
+                blankToEmpty(category), blankToEmpty(search),
+                PageRequest.of(page, size, Sort.by(Sort.Direction.ASC, "id")));
+        Map<Long, Integer> available = availability(rows.getContent().stream()
+                .map(Product::getId).toList());
+        return rows.map(product -> toResponse(product, available));
+    }
+
+    public List<String> getCategories() {
+        return productRepository.findDistinctCategoryByActiveTrueOrderByCategory();
     }
 
     public ProductResponse getProductById(Long id) {
@@ -59,7 +91,7 @@ public class ProductService {
                     );
                 });
 
-        return toResponse(product);
+        return toResponse(product, availability(List.of(product.getId())));
     }
 
     public ProductResponse updateProduct(
@@ -84,7 +116,8 @@ public class ProductService {
             product.setActive(request.active());
         }
 
-        return toResponse(productRepository.save(product));
+        Product saved = productRepository.save(product);
+        return toResponse(saved, availability(List.of(saved.getId())));
     }
 
     public void deleteProduct(Long id) {
@@ -99,13 +132,32 @@ public class ProductService {
         log.info("Product deleted successfully with id: {}", id);
     }
 
-    private ProductResponse toResponse(Product product) {
+    private Map<Long, Integer> availability(List<Long> productIds) {
+        if (inventoryClient == null || productIds.isEmpty()) {
+            return null;
+        }
+
+        return inventoryClient.getAvailability(productIds).stream()
+                .collect(Collectors.toMap(
+                        InventoryAvailability::productId,
+                        InventoryAvailability::availableQuantity,
+                        Math::min));
+    }
+
+    private String blankToEmpty(String value) {
+        return value == null || value.isBlank() ? "" : value.trim();
+    }
+
+    private ProductResponse toResponse(Product product, Map<Long, Integer> availability) {
+        int availableQuantity = availability == null
+                ? product.getQuantity()
+                : availability.getOrDefault(product.getId(), 0);
         return new ProductResponse(
                 product.getId(),
                 product.getName(),
                 product.getDescription(),
                 product.getPrice(),
-                product.getQuantity(),
+                availableQuantity,
                 product.getCategory(),
                 product.getImageUrl(),
                 product.isActive(),

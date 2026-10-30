@@ -18,8 +18,7 @@ public class InternalServiceFilter extends OncePerRequestFilter {
     private static final String SECRET_HEADER =
             "X-Internal-Service-Secret";
 
-    private static final String PAYMENT_LOOKUP_PATH =
-            "/api/payments/internal/by-idempotency-key";
+    private static final String PAYMENT_API_PATH = "/api/payments";
 
     private final byte[] expectedSecret;
 
@@ -33,8 +32,8 @@ public class InternalServiceFilter extends OncePerRequestFilter {
         String requestPath = request.getRequestURI()
                 .substring(request.getContextPath().length());
 
-        return !("GET".equals(request.getMethod())
-                && PAYMENT_LOOKUP_PATH.equals(requestPath));
+        return !(PAYMENT_API_PATH.equals(requestPath)
+                || requestPath.startsWith(PAYMENT_API_PATH + "/"));
     }
 
     @Override

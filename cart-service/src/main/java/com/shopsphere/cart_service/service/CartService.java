@@ -74,6 +74,9 @@ public class CartService {
                 .orElse(null);
 
         int newQuantity = request.quantity();
+        int requestedTotal = Math.addExact(
+                item == null ? 0 : item.getQuantity(), newQuantity);
+        validateAvailableQuantity(product, requestedTotal);
 
         if (item == null) {
             item = new CartItem();
@@ -106,6 +109,7 @@ public class CartService {
 
         Cart cart = getExistingCart(userId);
         ProductResponse product = getActiveProduct(productId, authorization);
+        validateAvailableQuantity(product, request.quantity());
 
         CartItem item = cartItemRepository
                 .findByCartIdAndProductId(cart.getId(), productId)
@@ -225,6 +229,21 @@ public class CartService {
         }
 
         return product;
+    }
+
+    private void validateAvailableQuantity(ProductResponse product, int requestedQuantity) {
+        if (product.quantity() == null || product.quantity() <= 0) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "This item is out of stock"
+            );
+        }
+        if (requestedQuantity > product.quantity()) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "Only " + product.quantity() + " item(s) are currently available"
+            );
+        }
     }
 
 

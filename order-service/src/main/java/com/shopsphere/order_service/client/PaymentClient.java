@@ -44,6 +44,7 @@ public class PaymentClient {
             return restClient.post()
                     .uri("/api/payments")
                     .header("Idempotency-Key", idempotencyKey)
+                    .header("X-Internal-Service-Secret", internalSecret)
                     .body(request)
                     .retrieve()
                     .body(PaymentResponse.class);

@@ -5,12 +5,36 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.HashMap;
 import java.util.Map;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    /**
+     * Keep the controller's safe, user-facing reason in the JSON response.
+     * Spring's default /error response omits it unless error-message inclusion
+     * is enabled globally, which made checkout conflicts indistinguishable to
+     * the frontend (and prevented it from replacing a failed idempotency key).
+     */
+    @ExceptionHandler(ResponseStatusException.class)
+    public ResponseEntity<Map<String, String>> handleResponseStatusException(
+            ResponseStatusException exception) {
+
+        String message = exception.getReason();
+        if (message == null || message.isBlank()) {
+            message = exception.getStatusCode().toString();
+        }
+
+        Map<String, String> error = Map.of(
+                "error", exception.getStatusCode().toString(),
+                "message", message
+        );
+
+        return ResponseEntity.status(exception.getStatusCode()).body(error);
+    }
 
     @ExceptionHandler(OrderNotFoundException.class)
     public ResponseEntity<Map<String, String>> handleOrderNotFound(

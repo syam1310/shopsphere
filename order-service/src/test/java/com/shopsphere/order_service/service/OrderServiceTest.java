@@ -8,6 +8,8 @@ import com.shopsphere.order_service.dto.OrderItemRequest;
 import com.shopsphere.order_service.entity.Order;
 import com.shopsphere.order_service.entity.OrderItem;
 import com.shopsphere.order_service.entity.OrderStatus;
+import com.shopsphere.order_service.exception.InvalidOrderStatusException;
+import com.shopsphere.order_service.exception.OrderNotFoundException;
 import com.shopsphere.order_service.exception.ProductNotFoundException;
 import com.shopsphere.order_service.repository.OrderRepository;
 import org.junit.jupiter.api.Test;
@@ -163,6 +165,41 @@ class OrderServiceTest {
         verify(orderRepository, never()).save(any());
     }
 
+    @Test
+    void createOrder_whenReservationResponseFails_releasesAttemptedReservation() {
+        ProductResponse product = new ProductResponse(
+                3L,
+                "Wireless Mouse",
+                new BigDecimal("500.00"),
+                10,
+                true
+        );
+        RuntimeException reservationFailure = new RuntimeException("Inventory timeout");
+        when(productClient.getProductById(3L, "test-token")).thenReturn(product);
+        doThrow(reservationFailure).when(inventoryClient)
+                .reserveInventory(any(UUID.class), eq(3L), eq(1));
+
+        CreateOrderRequest request = new CreateOrderRequest(List.of(
+                new OrderItemRequest(3L, 1)
+        ));
+
+        RuntimeException thrown = assertThrows(
+                RuntimeException.class,
+                () -> orderService.createOrder(request, 9L, "test-token")
+        );
+
+        assertSame(reservationFailure, thrown);
+        ArgumentCaptor<UUID> reservationIdCaptor =
+                ArgumentCaptor.forClass(UUID.class);
+        verify(inventoryClient).reserveInventory(
+                reservationIdCaptor.capture(), eq(3L), eq(1));
+        verify(inventoryClient).releaseInventory(
+                reservationIdCaptor.getValue(), 3L, 1);
+        verify(compensationService, never()).recordFailedRelease(
+                any(UUID.class), eq(3L), eq(1), any(RuntimeException.class));
+        verify(orderRepository, never()).save(any());
+    }
+
 
     @Test
     void updateOrderStatus_whenCancellationReleaseFails_recordsCompensation() {
@@ -207,6 +244,94 @@ class OrderServiceTest {
         );
 
         verify(orderRepository).save(order);
+    }
+
+    @Test
+    void updateOrderStatus_whenCancellingPendingOrder_releasesInventoryAndSavesCancellation() {
+        UUID reservationId = UUID.randomUUID();
+        Order order = orderWithReservation(OrderStatus.PENDING, reservationId);
+        when(orderRepository.findById(10L)).thenReturn(Optional.of(order));
+        when(orderRepository.save(order)).thenReturn(order);
+
+        Order result = orderService.updateOrderStatus(10L, OrderStatus.CANCELLED);
+
+        assertSame(order, result);
+        assertEquals(OrderStatus.CANCELLED, result.getStatus());
+        verify(inventoryClient).releaseInventory(reservationId, 3L, 1);
+        verify(orderRepository).save(order);
+        verifyNoInteractions(compensationService);
+    }
+
+    @Test
+    void updateOrderStatus_whenCancellationIsRepeated_doesNotReleaseOrSaveAgain() {
+        UUID reservationId = UUID.randomUUID();
+        Order order = orderWithReservation(OrderStatus.CANCELLED, reservationId);
+        when(orderRepository.findById(10L)).thenReturn(Optional.of(order));
+
+        Order result = orderService.updateOrderStatus(10L, OrderStatus.CANCELLED);
+
+        assertSame(order, result);
+        verifyNoInteractions(inventoryClient, compensationService);
+        verify(orderRepository, never()).save(any());
+    }
+
+    @Test
+    void updateOrderStatus_whenOrderWasAlreadyConfirmed_rejectsCancellationWithoutReleasingInventory() {
+        UUID reservationId = UUID.randomUUID();
+        Order order = orderWithReservation(OrderStatus.CONFIRMED, reservationId);
+        when(orderRepository.findById(10L)).thenReturn(Optional.of(order));
+
+        assertThrows(InvalidOrderStatusException.class,
+                () -> orderService.updateOrderStatus(10L, OrderStatus.CANCELLED));
+
+        verifyNoInteractions(inventoryClient, compensationService);
+        verify(orderRepository, never()).save(any());
+    }
+
+    @Test
+    void updateOrderStatus_whenOrderDoesNotExist_returnsNotFoundWithoutReleasingInventory() {
+        when(orderRepository.findById(404L)).thenReturn(Optional.empty());
+
+        assertThrows(OrderNotFoundException.class,
+                () -> orderService.updateOrderStatus(404L, OrderStatus.CANCELLED));
+
+        verifyNoInteractions(inventoryClient, compensationService);
+        verify(orderRepository, never()).save(any());
+    }
+
+    @Test
+    void updateOrderStatus_whenReleaseFailsAndCompensationCannotBeRecorded_keepsOrderPending() {
+        UUID reservationId = UUID.randomUUID();
+        Order order = orderWithReservation(OrderStatus.PENDING, reservationId);
+        when(orderRepository.findById(10L)).thenReturn(Optional.of(order));
+
+        RuntimeException releaseFailure = new RuntimeException("Inventory unavailable");
+        RuntimeException persistenceFailure = new RuntimeException("Cannot record retry");
+        doThrow(releaseFailure).when(inventoryClient)
+                .releaseInventory(reservationId, 3L, 1);
+        doThrow(persistenceFailure).when(compensationService)
+                .recordFailedRelease(reservationId, 3L, 1, releaseFailure);
+
+        RuntimeException thrown = assertThrows(RuntimeException.class,
+                () -> orderService.updateOrderStatus(10L, OrderStatus.CANCELLED));
+
+        assertSame(releaseFailure, thrown);
+        assertEquals(OrderStatus.PENDING, order.getStatus());
+        assertTrue(List.of(thrown.getSuppressed()).contains(persistenceFailure));
+        verify(orderRepository, never()).save(any());
+    }
+
+    private Order orderWithReservation(OrderStatus status, UUID reservationId) {
+        Order order = new Order();
+        order.setId(10L);
+        order.setStatus(status);
+
+        OrderItem item = new OrderItem();
+        item.setReservationId(reservationId);
+        item.setProductId(3L);
+        item.setQuantity(1);
+        order.addItem(item);
+        return order;
     }
 
 }

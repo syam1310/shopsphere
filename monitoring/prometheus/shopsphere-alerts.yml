@@ -1,0 +1,35 @@
+groups:
+  - name: shopsphere-application
+    rules:
+      - alert: ShopSphereServiceUnavailable
+        expr: up{job=~"shopsphere-(gateway|services)"} == 0 or probe_success{job="shopsphere-health"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "ShopSphere service is unavailable"
+          description: "Prometheus cannot scrape {{ $labels.instance }} ({{ $labels.job }})."
+      - alert: ShopSphereHighServerErrorRate
+        expr: |
+          (
+            sum by (job) (rate(http_server_requests_seconds_count{job=~"shopsphere-(gateway|services)",status=~"5.."}[5m]))
+            /
+            clamp_min(sum by (job) (rate(http_server_requests_seconds_count{job=~"shopsphere-(gateway|services)"}[5m])), 0.1)
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Elevated HTTP 5xx rate"
+          description: "{{ $labels.job }} has exceeded 5% HTTP 5xx responses for five minutes."
+      - alert: ShopSphereJvmMemoryHigh
+        expr: |
+          jvm_memory_used_bytes{job=~"shopsphere-(gateway|services)", area="heap"}
+          /
+          jvm_memory_max_bytes{job=~"shopsphere-(gateway|services)", area="heap"} > 0.85
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "ShopSphere JVM heap usage is high"
+          description: "{{ $labels.job }} JVM heap has remained above 85% for ten minutes."

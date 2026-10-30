@@ -1,7 +1,11 @@
 package com.shopsphere.order_service.controller;
 
 import com.shopsphere.order_service.client.CartClient;
+import com.shopsphere.order_service.client.NotificationClient;
 import com.shopsphere.order_service.client.PaymentClient;
+import com.shopsphere.order_service.client.UserClient;
+import com.shopsphere.order_service.entity.CheckoutRequest;
+import com.shopsphere.order_service.entity.CheckoutStatus;
 import com.shopsphere.order_service.entity.Order;
 import com.shopsphere.order_service.entity.OrderStatus;
 import com.shopsphere.order_service.security.JwtAuthenticationFilter;
@@ -32,6 +36,7 @@ import java.util.Optional;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(controllers = OrderController.class)
@@ -62,6 +67,12 @@ class OrderCheckoutReconciliationTest {
 
     @MockitoBean
     private CartClient cartClient;
+
+    @MockitoBean
+    private UserClient userClient;
+
+    @MockitoBean
+    private NotificationClient notificationClient;
 
     @MockitoBean
     private PaymentClient paymentClient;
@@ -121,11 +132,41 @@ class OrderCheckoutReconciliationTest {
                 .contentType(MediaType.APPLICATION_JSON);
     }
 
+    private MockHttpServletRequestBuilder cancelOrderRequest() {
+        var auth = new UsernamePasswordAuthenticationToken(
+                USER_ID,
+                null,
+                List.of(new SimpleGrantedAuthority("ROLE_USER"))
+        );
+
+        return patch("/api/orders/{id}/status", ORDER_ID)
+                .principal(auth)
+                .param("status", "CANCELLED");
+    }
+
+    @Test
+    void cancellationWhileCheckoutIsProcessing_returnsConflictWithoutCancellingOrder()
+            throws Exception {
+        Order order = pendingOrder();
+        CheckoutRequest checkout = new CheckoutRequest();
+        checkout.setStatus(CheckoutStatus.PROCESSING);
+
+        when(orderService.getOrderById(ORDER_ID)).thenReturn(Optional.of(order));
+        when(checkoutIdempotencyService.find(USER_ID, KEY))
+                .thenReturn(Optional.of(checkout));
+
+        mockMvc.perform(cancelOrderRequest())
+                .andExpect(status().isConflict());
+
+        verify(orderService, never()).updateOrderStatus(
+                ORDER_ID, OrderStatus.CANCELLED);
+    }
+
     @Test
     void failedPayment_cancelsOrderAndReturns402() throws Exception {
         arrangePendingOrder();
 
-        when(paymentClient.getPaymentByIdempotencyKey(KEY, USER_ID))
+        when(paymentClient.createPayment(any(PaymentClient.CreatePaymentRequest.class), eq(KEY)))
                 .thenReturn(payment("FAILED"));
 
         Order cancelledOrder = pendingOrder();
@@ -152,7 +193,7 @@ class OrderCheckoutReconciliationTest {
     void successfulPayment_confirmsOrderAndClearsCart() throws Exception {
         arrangePendingOrder();
 
-        when(paymentClient.getPaymentByIdempotencyKey(KEY, USER_ID))
+        when(paymentClient.createPayment(any(PaymentClient.CreatePaymentRequest.class), eq(KEY)))
                 .thenReturn(payment("SUCCESS"));
 
         Order confirmedOrder = pendingOrder();
@@ -174,11 +215,36 @@ class OrderCheckoutReconciliationTest {
     }
 
     @Test
+    void pendingOrderWithoutPayment_retriesCreationWithExistingCheckoutKey()
+            throws Exception {
+        arrangePendingOrder();
+
+        when(paymentClient.createPayment(any(PaymentClient.CreatePaymentRequest.class), eq(KEY)))
+                .thenReturn(payment("SUCCESS"));
+
+        Order confirmedOrder = pendingOrder();
+        confirmedOrder.setStatus(OrderStatus.CONFIRMED);
+        when(orderService.updateOrderStatus(ORDER_ID, OrderStatus.CONFIRMED))
+                .thenReturn(confirmedOrder);
+
+        mockMvc.perform(checkoutRequest())
+                .andExpect(status().isOk());
+
+        verify(paymentClient).createPayment(
+                new PaymentClient.CreatePaymentRequest(
+                        ORDER_ID, USER_ID, AMOUNT, "UPI"),
+                KEY);
+        verify(orderService).updateOrderStatus(ORDER_ID, OrderStatus.CONFIRMED);
+        verify(checkoutIdempotencyService).markCompleted(USER_ID, KEY, ORDER_ID);
+        verify(cartClient).clearCart(AUTH_HEADER);
+    }
+
+    @Test
     void paymentServiceUnavailable_returns503AndLeavesOrderPending()
             throws Exception {
         arrangePendingOrder();
 
-        when(paymentClient.getPaymentByIdempotencyKey(KEY, USER_ID))
+        when(paymentClient.createPayment(any(PaymentClient.CreatePaymentRequest.class), eq(KEY)))
                 .thenThrow(new PaymentClient.PaymentServiceException(
                         "Payment service unavailable",
                         new IllegalStateException("Connection failed")
@@ -216,7 +282,7 @@ class OrderCheckoutReconciliationTest {
                         null
                 );
 
-        when(paymentClient.getPaymentByIdempotencyKey(KEY, USER_ID))
+        when(paymentClient.createPayment(any(PaymentClient.CreatePaymentRequest.class), eq(KEY)))
                 .thenReturn(mismatchedPayment);
 
         mockMvc.perform(checkoutRequest())

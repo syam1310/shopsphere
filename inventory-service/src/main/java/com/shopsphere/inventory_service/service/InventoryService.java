@@ -3,6 +3,7 @@ package com.shopsphere.inventory_service.service;
 import com.shopsphere.inventory_service.entity.Inventory;
 import com.shopsphere.inventory_service.entity.InventoryReservation;
 import com.shopsphere.inventory_service.entity.ReservationStatus;
+import com.shopsphere.inventory_service.dto.InventoryAvailabilityResponse;
 import com.shopsphere.inventory_service.repository.InventoryRepository;
 import com.shopsphere.inventory_service.repository.InventoryReservationRepository;
 import org.springframework.stereotype.Service;
@@ -27,6 +28,17 @@ public class InventoryService {
 
     public List<Inventory> getAllInventory() {
         return inventoryRepository.findAll();
+    }
+
+    public List<InventoryAvailabilityResponse> getAvailability(List<Long> productIds) {
+        List<Inventory> rows = productIds == null || productIds.isEmpty()
+                ? inventoryRepository.findAll()
+                : inventoryRepository.findByProductIdIn(productIds);
+        return rows.stream()
+                .map(inventory -> new InventoryAvailabilityResponse(
+                        inventory.getProductId(),
+                        inventory.getQuantity() - inventory.getReservedQuantity()))
+                .toList();
     }
 
     public Inventory getInventoryByProductId(Long productId) {
@@ -153,14 +165,25 @@ public class InventoryService {
         }
         validateQuantity(quantityToRelease, "Release");
 
+        // Reserve and release lock inventory before the reservation row. A release
+        // can therefore safely create a tombstone when a reserve response was lost:
+        // a late retry using the same UUID will see RELEASED and cannot consume stock.
+        Inventory inventory = getInventoryForUpdate(productId);
         InventoryReservation reservation = reservationRepository
                 .findByReservationIdForUpdate(reservationId)
-                .orElseThrow(() -> new NoSuchElementException(
-                        "Reservation not found: " + reservationId));
+                .orElse(null);
+
+        if (reservation == null) {
+            reservation = new InventoryReservation();
+            reservation.setReservationId(reservationId);
+            reservation.setProductId(productId);
+            reservation.setQuantity(quantityToRelease);
+            reservation.setStatus(ReservationStatus.RELEASED);
+            reservationRepository.save(reservation);
+            return inventory;
+        }
 
         validateMatchingReservation(reservation, productId, quantityToRelease);
-
-        Inventory inventory = getInventoryForUpdate(reservation.getProductId());
 
         if (reservation.getStatus() == ReservationStatus.RELEASED) {
             return inventory;

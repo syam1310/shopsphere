@@ -13,6 +13,7 @@ import com.shopsphere.order_service.exception.OrderNotFoundException;
 import com.shopsphere.order_service.repository.OrderRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.client.HttpClientErrorException;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -126,13 +127,22 @@ public class OrderService {
                 order.addItem(orderItem);
                 totalAmount = totalAmount.add(itemTotal);
 
-                inventoryClient.reserveInventory(
-                        reservationId,
-                        product.id(),
-                        item.quantity());
-
-                // Record only after inventory confirms reservation.
-                reservedItems.add(orderItem);
+                try {
+                    inventoryClient.reserveInventory(
+                            reservationId,
+                            product.id(),
+                            item.quantity());
+                    reservedItems.add(orderItem);
+                } catch (HttpClientErrorException exception) {
+                    // A definitive 4xx response means Inventory rejected the
+                    // reservation; there is nothing to release for this item.
+                    throw exception;
+                } catch (RuntimeException exception) {
+                    // A timeout or 5xx may occur after Inventory committed the
+                    // reservation, so keep this UUID for compensating release.
+                    reservedItems.add(orderItem);
+                    throw exception;
+                }
             }
 
             order.setTotalAmount(totalAmount);
@@ -174,6 +184,12 @@ public class OrderService {
     public Order updateOrderStatus(Long orderId, OrderStatus newStatus) {
         Order order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new OrderNotFoundException(orderId));
+
+        // Cancellation is idempotent: retries must not release the same stock again.
+        if (newStatus == OrderStatus.CANCELLED
+                && order.getStatus() == OrderStatus.CANCELLED) {
+            return order;
+        }
 
         if (order.getStatus() != OrderStatus.PENDING) {
             throw new InvalidOrderStatusException(

@@ -1,0 +1,64 @@
+# Isolated local load-test stack. Always run with project name shopsphere-load.
+# Database volumes and host ports are separate from the normal demo stack.
+services:
+  user-db:
+    container_name: shopsphere-load-user-db
+    ports: !override ["15433:5432"]
+  product-db:
+    container_name: shopsphere-load-product-db
+    ports: !override ["15434:5432"]
+  inventory-db:
+    container_name: shopsphere-load-inventory-db
+    ports: !override ["15435:5432"]
+  order-db:
+    container_name: shopsphere-load-order-db
+    ports: !override ["15436:5432"]
+  cart-db:
+    container_name: shopsphere-load-cart-db
+    ports: !override ["15437:5432"]
+  payment-db:
+    container_name: shopsphere-load-payment-db
+    ports: !override ["15438:5432"]
+  notification-db:
+    container_name: shopsphere-load-notification-db
+    ports: !override ["15439:5432"]
+  user-service:
+    container_name: shopsphere-load-user-service
+    ports: !override ["18081:8081"]
+  product-service:
+    container_name: shopsphere-load-product-service
+    ports: !override ["18082:8082"]
+  inventory-service:
+    container_name: shopsphere-load-inventory-service
+    ports: !override ["18083:8083"]
+  cart-service:
+    container_name: shopsphere-load-cart-service
+    ports: !override ["18085:8085"]
+  order-service:
+    container_name: shopsphere-load-order-service
+    ports: !override ["18084:8084"]
+  payment-service:
+    container_name: shopsphere-load-payment-service
+    ports: !override ["18086:8086"]
+  notification-service:
+    container_name: shopsphere-load-notification-service
+    ports: !override ["18087:8087"]
+  api-gateway:
+    container_name: shopsphere-load-api-gateway
+    ports: !override ["18080:8080"]
+
+volumes:
+  user_db_data:
+    name: shopsphere_load_user_db_data
+  product_db_data:
+    name: shopsphere_load_product_db_data
+  inventory_db_data:
+    name: shopsphere_load_inventory_db_data
+  order_db_data:
+    name: shopsphere_load_order_db_data
+  cart_db_data:
+    name: shopsphere_load_cart_db_data
+  payment_db_data:
+    name: shopsphere_load_payment_db_data
+  notification_db_data:
+    name: shopsphere_load_notification_db_data

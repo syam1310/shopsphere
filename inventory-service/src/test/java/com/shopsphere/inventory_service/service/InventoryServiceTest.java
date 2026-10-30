@@ -8,11 +8,13 @@ import com.shopsphere.inventory_service.repository.InventoryReservationRepositor
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.Optional;
+import java.util.List;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -149,6 +151,24 @@ class InventoryServiceTest {
     }
 
     @Test
+    void getAvailability_forRequestedProducts_returnsOnlyAvailableQuantities() {
+        Inventory second = new Inventory();
+        second.setProductId(1002L);
+        second.setQuantity(10);
+        second.setReservedQuantity(4);
+        when(inventoryRepository.findByProductIdIn(List.of(1001L, 1002L)))
+                .thenReturn(List.of(inventory, second));
+
+        var result = inventoryService.getAvailability(List.of(1001L, 1002L));
+
+        assertEquals(2, result.size());
+        assertEquals(15, result.get(0).availableQuantity());
+        assertEquals(6, result.get(1).availableQuantity());
+        verify(inventoryRepository).findByProductIdIn(List.of(1001L, 1002L));
+        verify(inventoryRepository, never()).findAll();
+    }
+
+    @Test
     void releaseInventory_withSameReservationId_shouldNotReleaseTwice() {
         UUID reservationId = UUID.randomUUID();
         InventoryReservation reservation =
@@ -170,6 +190,47 @@ class InventoryServiceTest {
 
         assertEquals(2, inventory.getReservedQuantity());
         verify(inventoryRepository, times(1)).save(inventory);
+    }
+
+    @Test
+    void releaseInventory_whenReservationIsNotYetVisible_createsTombstone() {
+        UUID reservationId = UUID.randomUUID();
+        when(inventoryRepository.findByProductIdForUpdate(1001L))
+                .thenReturn(Optional.of(inventory));
+        when(reservationRepository.findByReservationIdForUpdate(reservationId))
+                .thenReturn(Optional.empty());
+        when(reservationRepository.save(any(InventoryReservation.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        Inventory result = inventoryService.releaseInventory(reservationId, 1001L, 3);
+
+        assertSame(inventory, result);
+        assertEquals(5, inventory.getReservedQuantity());
+        ArgumentCaptor<InventoryReservation> reservationCaptor =
+                ArgumentCaptor.forClass(InventoryReservation.class);
+        verify(reservationRepository).save(reservationCaptor.capture());
+        assertEquals(reservationId, reservationCaptor.getValue().getReservationId());
+        assertEquals(1001L, reservationCaptor.getValue().getProductId());
+        assertEquals(3, reservationCaptor.getValue().getQuantity());
+        assertEquals(ReservationStatus.RELEASED, reservationCaptor.getValue().getStatus());
+        verify(inventoryRepository, never()).save(any(Inventory.class));
+    }
+
+    @Test
+    void reserveInventory_whenReservationWasAlreadyReleased_rejectsLateRetry() {
+        UUID reservationId = UUID.randomUUID();
+        InventoryReservation tombstone = reservedReservation(reservationId, 1001L, 3);
+        tombstone.setStatus(ReservationStatus.RELEASED);
+        when(inventoryRepository.findByProductIdForUpdate(1001L))
+                .thenReturn(Optional.of(inventory));
+        when(reservationRepository.findByReservationId(reservationId))
+                .thenReturn(Optional.of(tombstone));
+
+        assertThrows(IllegalStateException.class,
+                () -> inventoryService.reserveInventory(reservationId, 1001L, 3));
+
+        assertEquals(5, inventory.getReservedQuantity());
+        verify(inventoryRepository, never()).save(any(Inventory.class));
     }
 
     @Test

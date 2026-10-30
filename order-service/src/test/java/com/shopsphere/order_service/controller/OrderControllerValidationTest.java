@@ -1,7 +1,9 @@
 package com.shopsphere.order_service.controller;
 
 import com.shopsphere.order_service.client.CartClient;
+import com.shopsphere.order_service.client.NotificationClient;
 import com.shopsphere.order_service.client.PaymentClient;
+import com.shopsphere.order_service.client.UserClient;
 import com.shopsphere.order_service.security.JwtAuthenticationFilter;
 import com.shopsphere.order_service.security.JwtService;
 import com.shopsphere.order_service.service.CheckoutIdempotencyService;
@@ -59,6 +61,12 @@ class OrderControllerValidationTest {
 
     @MockitoBean
     private CheckoutIdempotencyService checkoutIdempotencyService;
+
+    @MockitoBean
+    private UserClient userClient;
+
+    @MockitoBean
+    private NotificationClient notificationClient;
 
     @Autowired
     private RequestMappingHandlerMapping handlerMapping;

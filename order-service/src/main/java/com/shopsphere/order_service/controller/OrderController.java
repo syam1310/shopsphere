@@ -1,8 +1,11 @@
 package com.shopsphere.order_service.controller;
 
 import com.shopsphere.order_service.client.CartClient;
+import com.shopsphere.order_service.client.NotificationClient;
 import com.shopsphere.order_service.client.PaymentClient;
+import com.shopsphere.order_service.client.UserClient;
 import com.shopsphere.order_service.dto.CreateOrderRequest;
+import com.shopsphere.order_service.dto.BuyNowRequest;
 import com.shopsphere.order_service.dto.OrderItemRequest;
 import com.shopsphere.order_service.entity.CheckoutRequest;
 import com.shopsphere.order_service.entity.CheckoutStatus;
@@ -13,10 +16,13 @@ import com.shopsphere.order_service.security.JwtService;
 import com.shopsphere.order_service.service.CheckoutIdempotencyService;
 import com.shopsphere.order_service.service.OrderService;
 import jakarta.validation.Valid;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
@@ -27,11 +33,15 @@ import java.util.stream.Collectors;
 @RequestMapping("/api/orders")
 public class OrderController {
 
+    private static final Logger log =
+            LoggerFactory.getLogger(OrderController.class);
     private final OrderService orderService;
     private final JwtService jwtService;
     private final CartClient cartClient;
     private final CheckoutIdempotencyService checkoutIdempotencyService;
     private final PaymentClient paymentClient;
+    private final UserClient userClient;
+    private final NotificationClient notificationClient;
 
 
     public OrderController(
@@ -39,12 +49,16 @@ public class OrderController {
             JwtService jwtService,
             CartClient cartClient,
             PaymentClient paymentClient,
-            CheckoutIdempotencyService checkoutIdempotencyService) {
+            CheckoutIdempotencyService checkoutIdempotencyService,
+            UserClient userClient,
+            NotificationClient notificationClient) {
         this.orderService = orderService;
         this.jwtService = jwtService;
         this.cartClient = cartClient;
         this.paymentClient = paymentClient;
         this.checkoutIdempotencyService = checkoutIdempotencyService;
+        this.userClient = userClient;
+        this.notificationClient = notificationClient;
     }
 
 
@@ -163,6 +177,19 @@ public class OrderController {
                     "Customers may only cancel their own orders");
         }
 
+        if (status == OrderStatus.CANCELLED
+                && existingOrder.getStatus() == OrderStatus.PENDING
+                && existingOrder.getIdempotencyKey() != null) {
+            Optional<CheckoutRequest> checkout = checkoutIdempotencyService.find(
+                    existingOrder.getUserId(), existingOrder.getIdempotencyKey());
+            if (checkout.isPresent()
+                    && checkout.get().getStatus() == CheckoutStatus.PROCESSING) {
+                throw new ResponseStatusException(
+                        HttpStatus.CONFLICT,
+                        "Checkout is still processing; retry cancellation after it completes");
+            }
+        }
+
         return orderService.updateOrderStatus(id, status);
     }
 
@@ -216,6 +243,7 @@ public class OrderController {
                 if (existingOrder.getStatus() == OrderStatus.CONFIRMED) {
                     checkoutIdempotencyService.markCompleted(
                             userId, idempotencyKey, existingOrder.getId());
+                    enqueueOrderConfirmation(existingOrder, userId, authorizationHeader);
 
                     cartClient.clearCart(authorizationHeader);
 
@@ -234,6 +262,7 @@ public class OrderController {
                         existingOrder,
                         userId,
                         idempotencyKey,
+                        paymentMethod,
                         authorizationHeader);
 
                 if (reconciledOrder.getStatus() == OrderStatus.CONFIRMED) {
@@ -265,6 +294,7 @@ public class OrderController {
                             "Checkout is marked completed but the order is not confirmed");
                 }
 
+                enqueueOrderConfirmation(existingOrder, userId, authorizationHeader);
                 cartClient.clearCart(authorizationHeader);
 
                 return ResponseEntity.ok(existingOrder);
@@ -283,12 +313,10 @@ public class OrderController {
         }
 
         try {
-            CartClient.CartResponse cart =
-                    cartClient.getCart(authorizationHeader);
+            CartClient.CartResponse cart = cartClient.getCart(authorizationHeader);
 
             if (cart == null || cart.items() == null || cart.items().isEmpty()) {
-                throw new IllegalArgumentException(
-                        "Cannot checkout with an empty cart");
+                throw new IllegalArgumentException("Cannot checkout with an empty cart");
             }
 
             if (cart.userId() == null || !cart.userId().equals(userId)) {
@@ -297,86 +325,59 @@ public class OrderController {
             }
 
             var orderItems = cart.items().stream()
-                    .map(item -> new OrderItemRequest(
-                            item.productId(), item.quantity()))
+                    .map(item -> new OrderItemRequest(item.productId(), item.quantity()))
                     .collect(Collectors.toList());
 
             CreateOrderRequest request = new CreateOrderRequest(orderItems);
             String token = authorizationHeader.substring(7);
 
             Order createdOrder = orderService.createOrder(
-                    request,
-                    userId,
-                    token,
-                    idempotencyKey
-            );
+                    request, userId, token, idempotencyKey);
 
             PaymentClient.PaymentResponse payment = paymentClient.createPayment(
                     new PaymentClient.CreatePaymentRequest(
                             createdOrder.getId(),
                             userId,
                             createdOrder.getTotalAmount(),
-                            paymentMethod
-                    ),
-                    idempotencyKey
-            );
+                            paymentMethod),
+                    idempotencyKey);
 
             if (payment == null || payment.status() == null) {
                 throw new PaymentClient.PaymentServiceException(
                         "Payment Service returned an empty response",
-                        new IllegalStateException("Missing payment response")
-                );
+                        new IllegalStateException("Missing payment response"));
             }
 
             if ("FAILED".equalsIgnoreCase(payment.status())) {
-                orderService.updateOrderStatus(
-                        createdOrder.getId(),
-                        OrderStatus.CANCELLED
-                );
-
+                orderService.updateOrderStatus(createdOrder.getId(), OrderStatus.CANCELLED);
                 checkoutIdempotencyService.markFailed(userId, idempotencyKey);
-
                 throw new ResponseStatusException(
                         HttpStatus.PAYMENT_REQUIRED,
-                        "Payment failed; the order was cancelled"
-                );
+                        "Payment failed; the order was cancelled");
             }
 
             if (!"SUCCESS".equalsIgnoreCase(payment.status())) {
                 throw new ResponseStatusException(
                         HttpStatus.SERVICE_UNAVAILABLE,
-                        "Payment status is not final; checkout requires reconciliation"
-                );
+                        "Payment status is not final; checkout requires reconciliation");
             }
 
             Order confirmedOrder = orderService.updateOrderStatus(
-                    createdOrder.getId(),
-                    OrderStatus.CONFIRMED
-            );
+                    createdOrder.getId(), OrderStatus.CONFIRMED);
 
+            // Persist checkout completion before attempting external side effects.
             checkoutIdempotencyService.markCompleted(
                     userId, idempotencyKey, confirmedOrder.getId());
 
+            // Notification submission is best-effort; the queue sends email asynchronously.
+            enqueueOrderConfirmation(confirmedOrder, userId, authorizationHeader);
             cartClient.clearCart(authorizationHeader);
 
-            return ResponseEntity.status(HttpStatus.CREATED)
-                    .body(confirmedOrder);
-
-            // Store the order ID before attempting to clear the cart.
-//            checkoutIdempotencyService.markCompleted(
-//                    userId, idempotencyKey, createdOrder.getId());
-//
-//            cartClient.clearCart(authorizationHeader);
-//
-//            return ResponseEntity.status(HttpStatus.CREATED)
-//                    .body(createdOrder);
-
+            return ResponseEntity.status(HttpStatus.CREATED).body(confirmedOrder);
 
         } catch (RuntimeException exception) {
-
             Optional<Order> persistedOrder =
-                    orderService.findByUserIdAndIdempotencyKey(
-                            userId, idempotencyKey);
+                    orderService.findByUserIdAndIdempotencyKey(userId, idempotencyKey);
 
             try {
                 if (persistedOrder.isPresent()) {
@@ -384,44 +385,35 @@ public class OrderController {
 
                     if (existingOrder.getStatus() == OrderStatus.CONFIRMED) {
                         checkoutIdempotencyService.markCompleted(
-                                userId,
-                                idempotencyKey,
-                                existingOrder.getId());
-
+                                userId, idempotencyKey, existingOrder.getId());
+                        enqueueOrderConfirmation(
+                                existingOrder, userId, authorizationHeader);
+                        // Do not let a cart-clear failure turn a paid order into a failed checkout.
+                        if (!(exception instanceof ResponseStatusException)) {
+                            cartClient.clearCart(authorizationHeader);
+                            return ResponseEntity.ok(existingOrder);
+                        }
                     } else if (existingOrder.getStatus() == OrderStatus.CANCELLED) {
-                        checkoutIdempotencyService.markFailed(
-                                userId, idempotencyKey);
-
+                        checkoutIdempotencyService.markFailed(userId, idempotencyKey);
                     } else if (existingOrder.getStatus() == OrderStatus.PENDING
                             && exception instanceof PaymentClient.PaymentServiceException) {
-                        try {
-                            Order reconciledOrder = reconcilePendingOrder(
-                                    existingOrder,
-                                    userId,
-                                    idempotencyKey,
-                                    authorizationHeader);
-
-                            if (reconciledOrder.getStatus() == OrderStatus.CONFIRMED) {
-                                return ResponseEntity.ok(reconciledOrder);
-                            }
-
-                        } catch (ResponseStatusException reconciliationException) {
-                            throw reconciliationException;
-                        } catch (RuntimeException reconciliationException) {
-                            exception.addSuppressed(reconciliationException);
+                        Order reconciledOrder = reconcilePendingOrder(
+                                existingOrder,
+                                userId,
+                                idempotencyKey,
+                                paymentMethod,
+                                authorizationHeader);
+                        if (reconciledOrder.getStatus() == OrderStatus.CONFIRMED) {
+                            return ResponseEntity.ok(reconciledOrder);
                         }
                     }
-                    // Keep PENDING orders in PROCESSING for reconciliation.
-
+                    // Leave PENDING orders recoverable for payment reconciliation.
                 } else {
                     CheckoutRequest current = checkoutIdempotencyService
                             .find(userId, idempotencyKey)
                             .orElse(null);
-
-                    if (current != null
-                            && current.getStatus() != CheckoutStatus.COMPLETED) {
-                        checkoutIdempotencyService.markFailed(
-                                userId, idempotencyKey);
+                    if (current != null && current.getStatus() != CheckoutStatus.COMPLETED) {
+                        checkoutIdempotencyService.markFailed(userId, idempotencyKey);
                     }
                 }
             } catch (ResponseStatusException recoveryException) {
@@ -430,9 +422,108 @@ public class OrderController {
                 exception.addSuppressed(recoveryException);
             }
 
+            if (exception instanceof HttpClientErrorException.Conflict) {
+                throw new ResponseStatusException(
+                        HttpStatus.CONFLICT,
+                        "Inventory is insufficient for one or more items. Remove an unavailable item and try again.",
+                        exception);
+            }
+
             throw exception;
         }
+    }
 
+    @PostMapping("/checkout/buy-now")
+    public ResponseEntity<Order> buyNow(
+            @RequestHeader("Idempotency-Key") String idempotencyKey,
+            @RequestParam(defaultValue = "UPI") String paymentMethod,
+            @Valid @RequestBody BuyNowRequest request,
+            Authentication authentication,
+            jakarta.servlet.http.HttpServletRequest httpRequest) {
+        if (idempotencyKey.isBlank() || idempotencyKey.length() > 100) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Idempotency-Key must contain 1 to 100 characters");
+        }
+        paymentMethod = paymentMethod.trim().toUpperCase(java.util.Locale.ROOT);
+        if (!java.util.Set.of("UPI", "CARD", "WALLET").contains(paymentMethod)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "paymentMethod must be UPI, CARD, or WALLET");
+        }
+        Long userId = (Long) authentication.getPrincipal();
+        String authorizationHeader = httpRequest.getHeader("Authorization");
+        if (authorizationHeader == null || !authorizationHeader.startsWith("Bearer ")) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Missing or invalid bearer token");
+        }
+        String token = authorizationHeader.substring(7);
+
+        if (!checkoutIdempotencyService.claim(userId, idempotencyKey)) {
+            Optional<Order> existing = orderService.findByUserIdAndIdempotencyKey(userId, idempotencyKey);
+            if (existing.isPresent()) {
+                Order order = existing.get();
+                if (order.getStatus() == OrderStatus.CONFIRMED) return ResponseEntity.ok(order);
+                if (order.getStatus() == OrderStatus.PENDING) {
+                    Order recovered = reconcilePendingOrder(order, userId, idempotencyKey,
+                            paymentMethod, authorizationHeader, false);
+                    return ResponseEntity.ok(recovered);
+                }
+                checkoutIdempotencyService.markFailed(userId, idempotencyKey);
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                        "This order was cancelled; use a new checkout key");
+            }
+            CheckoutRequest current = checkoutIdempotencyService.find(userId, idempotencyKey)
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT,
+                            "Checkout request is being processed; retry with the same key"));
+            if (current.getStatus() == CheckoutStatus.COMPLETED && current.getOrderId() != null) {
+                return ResponseEntity.ok(orderService.getOrderById(current.getOrderId())
+                        .orElseThrow(() -> new OrderNotFoundException(current.getOrderId())));
+            }
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    current.getStatus() == CheckoutStatus.FAILED
+                            ? "This checkout key belongs to a failed request; use a new key"
+                            : "Checkout is still processing; retry with the same key");
+        }
+
+        try {
+            CreateOrderRequest orderRequest = new CreateOrderRequest(List.of(
+                    new OrderItemRequest(request.productId(), request.quantity())));
+            Order created = orderService.createOrder(orderRequest, userId, token, idempotencyKey);
+            PaymentClient.PaymentResponse payment = paymentClient.createPayment(
+                    new PaymentClient.CreatePaymentRequest(created.getId(), userId,
+                            created.getTotalAmount(), paymentMethod), idempotencyKey);
+            if (payment == null || payment.status() == null) {
+                throw new PaymentClient.PaymentServiceException("Payment Service returned an empty response",
+                        new IllegalStateException("Missing payment response"));
+            }
+            if ("FAILED".equalsIgnoreCase(payment.status())) {
+                orderService.updateOrderStatus(created.getId(), OrderStatus.CANCELLED);
+                checkoutIdempotencyService.markFailed(userId, idempotencyKey);
+                throw new ResponseStatusException(HttpStatus.PAYMENT_REQUIRED,
+                        "Payment failed; the order was cancelled");
+            }
+            if (!"SUCCESS".equalsIgnoreCase(payment.status())) {
+                throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                        "Payment status is not final; retry with the same key");
+            }
+            Order confirmed = orderService.updateOrderStatus(created.getId(), OrderStatus.CONFIRMED);
+            checkoutIdempotencyService.markCompleted(userId, idempotencyKey, confirmed.getId());
+            enqueueOrderConfirmation(confirmed, userId, authorizationHeader);
+            return ResponseEntity.status(HttpStatus.CREATED).body(confirmed);
+        } catch (RuntimeException exception) {
+            Optional<Order> persisted = orderService.findByUserIdAndIdempotencyKey(userId, idempotencyKey);
+            if (persisted.isPresent() && persisted.get().getStatus() == OrderStatus.PENDING
+                    && exception instanceof PaymentClient.PaymentServiceException) {
+                return ResponseEntity.ok(reconcilePendingOrder(persisted.get(), userId,
+                        idempotencyKey, paymentMethod, authorizationHeader, false));
+            }
+            if (persisted.isEmpty() || persisted.get().getStatus() == OrderStatus.CANCELLED) {
+                checkoutIdempotencyService.markFailed(userId, idempotencyKey);
+            }
+            if (exception instanceof HttpClientErrorException.Conflict) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                        "Inventory is insufficient for this item", exception);
+            }
+            throw exception;
+        }
     }
 
     private ResponseEntity<Order> waitForCheckoutCompletion(
@@ -466,6 +557,7 @@ public class OrderController {
                 if (order.getStatus() == OrderStatus.CONFIRMED) {
                     checkoutIdempotencyService.markCompleted(
                             userId, idempotencyKey, order.getId());
+                    enqueueOrderConfirmation(order, userId, authorizationHeader);
 
                     cartClient.clearCart(authorizationHeader);
 
@@ -507,6 +599,7 @@ public class OrderController {
                             "Checkout is marked completed but the order is not confirmed");
                 }
 
+                enqueueOrderConfirmation(order, userId, authorizationHeader);
                 cartClient.clearCart(authorizationHeader);
 
                 return ResponseEntity.ok(order);
@@ -528,7 +621,18 @@ public class OrderController {
             Order order,
             Long userId,
             String idempotencyKey,
+            String paymentMethod,
             String authorizationHeader) {
+        return reconcilePendingOrder(order, userId, idempotencyKey, paymentMethod, authorizationHeader, true);
+    }
+
+    private Order reconcilePendingOrder(
+            Order order,
+            Long userId,
+            String idempotencyKey,
+            String paymentMethod,
+            String authorizationHeader,
+            boolean clearCart) {
 
         if (order.getStatus() != OrderStatus.PENDING) {
             return order;
@@ -537,12 +641,25 @@ public class OrderController {
         final PaymentClient.PaymentResponse payment;
 
         try {
-            payment = paymentClient.getPaymentByIdempotencyKey(
-                    idempotencyKey, userId);
+            // Creating a payment is idempotent by checkout key. This both
+            // recovers a payment whose response was lost and creates one when
+            // the first attempt failed before Payment Service persisted it.
+            payment = paymentClient.createPayment(
+                    new PaymentClient.CreatePaymentRequest(
+                            order.getId(),
+                            userId,
+                            order.getTotalAmount(),
+                            paymentMethod),
+                    idempotencyKey);
         } catch (PaymentClient.PaymentServiceException exception) {
+            log.warn(
+                    "Could not resume simulated payment for pending order {}. "
+                            + "Retry checkout with the same key after the service recovers.",
+                    order.getId(),
+                    exception);
             throw new ResponseStatusException(
                     HttpStatus.SERVICE_UNAVAILABLE,
-                    "Payment status could not be verified; retry with the same checkout key",
+                    "Payment could not be resumed; retry with the same checkout key",
                     exception);
         }
 
@@ -575,7 +692,10 @@ public class OrderController {
             checkoutIdempotencyService.markCompleted(
                     userId, idempotencyKey, confirmedOrder.getId());
 
-            cartClient.clearCart(authorizationHeader);
+            enqueueOrderConfirmation(
+                    confirmedOrder, userId, authorizationHeader);
+
+            if (clearCart) cartClient.clearCart(authorizationHeader);
 
             return confirmedOrder;
         }
@@ -592,5 +712,62 @@ public class OrderController {
         throw new ResponseStatusException(
                 HttpStatus.SERVICE_UNAVAILABLE,
                 "Payment is not in a final successful or failed state; retry with the same checkout key");
+    }
+
+    private void enqueueOrderConfirmation(
+            Order order,
+            Long expectedUserId,
+            String authorizationHeader) {
+
+        if (order == null
+                || order.getId() == null
+                || order.getUserId() == null
+                || order.getTotalAmount() == null
+                || order.getStatus() != OrderStatus.CONFIRMED) {
+            return;
+        }
+
+        if (!order.getUserId().equals(expectedUserId)) {
+            log.error(
+                    "Skipping order confirmation notification due to user mismatch. "
+                            + "Order ID: {}",
+                    order.getId());
+            return;
+        }
+
+        try {
+            UserClient.UserResponse user =
+                    userClient.getCurrentUser(authorizationHeader);
+
+            if (user == null
+                    || user.id() == null
+                    || !user.id().equals(expectedUserId)
+                    || user.email() == null
+                    || user.email().isBlank()) {
+                log.error(
+                        "Skipping order confirmation notification because the "
+                                + "authenticated user profile is invalid. Order ID: {}",
+                        order.getId());
+                return;
+            }
+
+            notificationClient.enqueueOrderConfirmation(
+                    order.getId(),
+                    user.id(),
+                    user.email(),
+                    order.getTotalAmount());
+
+            log.info(
+                    "Order confirmation email job accepted for order ID {}",
+                    order.getId());
+
+        } catch (Exception exception) {
+            // Do not turn an already-confirmed, paid order into a checkout failure.
+            log.error(
+                    "Could not enqueue confirmation email for order ID {}. "
+                            + "A retry or durable outbox is needed.",
+                    order.getId(),
+                    exception);
+        }
     }
 }

@@ -45,10 +45,9 @@ public class PaymentService {
                     "Valid payment details are required");
         }
 
-        PaymentStatus status =
-                request.amount().compareTo(new BigDecimal("1000.00")) < 0
-                        ? PaymentStatus.SUCCESS
-                        : PaymentStatus.FAILED;
+        // Demo checkout confirms valid simulated payments at every amount.
+        // No external payment processor or customer payment credentials are used.
+        PaymentStatus status = PaymentStatus.SUCCESS;
 
         paymentRepository.insertIfIdempotencyKeyAbsent(
                 request.orderId(),
