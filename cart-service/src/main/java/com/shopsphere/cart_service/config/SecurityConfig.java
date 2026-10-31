@@ -1,4 +1,3 @@
-
 package com.shopsphere.cart_service.config;
 
 import com.shopsphere.cart_service.security.JwtAuthenticationFilter;
@@ -44,7 +43,7 @@ public class SecurityConfig {
                                 "/swagger-ui/**",
                                 "/swagger-ui.html",
                                 "/v3/api-docs/**",
-                                "/actuator/health",
+                                "/actuator/health/**",
                                 "/actuator/prometheus"
                         ).permitAll()
                         .requestMatchers(
